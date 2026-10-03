@@ -20,5 +20,13 @@ The ledger should settle from the gateway's reported INR cost when available,
 and treat reservations as estimated local limits. The smoke did not test a
 tool-result follow-up round trip or a full worker run.
 
+The same T1 smoke was repeated with `google/gemini-2.5-flash-lite` before any
+full live run. Both requests returned the `get_time` tool call. The default and
+`reasoning_effort=low` calls each reported 32 prompt tokens, 10 completion
+tokens, 42 total tokens, and ₹0.000824332 gateway cost. The catalogue-rate
+estimate from the visible token fields was ₹0.00072864 per call. This tiny
+sample supports Flash Lite as the budget-conscious eval setting; it does not
+establish the cost of a complete agent run.
+
 References: [AICredits API reference](https://aicredits.in/docs/api-reference),
 [pricing and thinking-token billing](https://aicredits.in/docs/pricing).
