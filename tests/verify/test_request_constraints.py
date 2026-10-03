@@ -2,7 +2,8 @@ from datetime import date
 
 import pytest
 
-from worker.verify.goals import dates_in, numbers_in
+from tests.verify.util import FakeProbes
+from worker.verify.goals import commit_goal, dates_in, numbers_in
 
 
 @pytest.mark.parametrize("text,expected", [
@@ -80,3 +81,52 @@ async def test_latest_request_cannot_carry_a_number_the_user_never_gave():
                                   "Enter Kestrova Components' newest invoice",
                                   _MessageProbes([]), run_id="r")
     assert rejection.code == "request_mismatch"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("proposal", [
+    {"goal_type": "register_invoice", "supplier": "Larkspur Supplies",
+     "invoice_number": "LS-1042"},
+    {"goal_type": "register_invoice", "supplier": "Larkspur Supplies",
+     "selector": "latest"},
+])
+async def test_explicit_invoice_number_cannot_be_replaced_by_a_different_source(proposal):
+    result = await commit_goal(proposal, "Register invoice LS-1041 from Larkspur Supplies.",
+                               FakeProbes(), run_id="r")
+    assert result.code == "request_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_negated_invoice_number_cannot_be_selected():
+    result = await commit_goal(
+        {"goal_type": "register_invoice", "supplier": "Larkspur Supplies",
+         "invoice_number": "LS-1041"},
+        "Add LS-1042 from Larkspur Supplies, but do not add LS-1041.",
+        FakeProbes(), run_id="r")
+    assert result.code in {"request_mismatch", "needs_confirmation"}
+
+
+@pytest.mark.asyncio
+async def test_after_date_cannot_be_committed_as_before_date():
+    result = await commit_goal(
+        {"goal_type": "export_invoices", "selector": "filter", "due_before": "2026-11-01"},
+        "Export invoices due after 2026-11-01.", FakeProbes(), run_id="r")
+    assert result.code in {"request_mismatch", "unsupported", "needs_confirmation"}
+
+
+@pytest.mark.asyncio
+async def test_export_cannot_drop_named_supplier_filter():
+    result = await commit_goal(
+        {"goal_type": "export_invoices", "selector": "filter", "due_before": "2026-11-01"},
+        "Export invoices for Brightfen Paper due before 2026-11-01.",
+        FakeProbes(), run_id="r")
+    assert result.code in {"request_mismatch", "needs_confirmation"}
+
+
+@pytest.mark.asyncio
+async def test_export_cannot_drop_supplier_alias_filter():
+    result = await commit_goal(
+        {"goal_type": "export_invoices", "selector": "filter", "due_before": "2026-11-01"},
+        "Export Brightfen invoices due before 2026-11-01.",
+        FakeProbes(), run_id="r")
+    assert result.code in {"request_mismatch", "needs_confirmation"}

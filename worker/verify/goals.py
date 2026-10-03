@@ -100,6 +100,10 @@ _INVOICE_OBJECT = re.compile(r"^(?:invoices?|bills?|it|them|[a-z]{2}-\d+)$")
 _RECORD_VERB = re.compile(r"^(?:register|enter|record|log|add|put|file|book|input|capture|"
                           r"insert)(?:s|ed|ing)?$")
 _PASSIVE_REGISTER = re.compile(r"\b(?:need|needs|has|have) to go$|\b(?:must|should) go$")
+_INVOICE_NUMBER = re.compile(r"\b[a-z]{2,10}-\d+\b", re.IGNORECASE)
+_OTHER_OBJECT = re.compile(r"\b(?:refund|credit note|payment|void|cancel|cancellation)\b")
+_ACTION_WORD = re.compile(r"^(?:register|enter|record|log|add|put|file|book|input|capture|"
+                          r"insert|export|download|update|change|replace|correct|sync)\w*$")
 _GOAL_RULES: dict[GoalType, dict] = {
     GoalType.register_invoice: {"verb": _RECORD_VERB, "object": _INVOICE_OBJECT},
     GoalType.register_batch: {"verb": _RECORD_VERB, "object": _INVOICE_OBJECT},
@@ -135,6 +139,18 @@ def _sentences(request: str) -> list[tuple[list[str], bool]]:
 
 
 def _action_negated(words: list[str], index: int) -> bool:
+    # A prohibition can be separated from its verb by an adverbial phrase:
+    # "Do not under any circumstances register...". Stop at another action or a
+    # contrasting clause so "don't export; register the invoice" is allowed.
+    for position in range(index - 1, -1, -1):
+        if words[position] in {"but", "however", "instead"}:
+            break
+        if _ACTION_WORD.match(words[position]):
+            break
+        if words[position] in {"don't", "dont", "never", "avoid"}:
+            return True
+        if (words[position] == "not" and position > 0 and words[position - 1] == "do"):
+            return True
     for position in range(max(0, index - 3), index):
         word = words[position]
         if word not in _NEGATION:
@@ -150,6 +166,11 @@ def _action_negated(words: list[str], index: int) -> bool:
 
 def action_evidence(goal_type: GoalType, request: str) -> str:
     rule = _GOAL_RULES[goal_type]
+    latest_message = request.rsplit("\n", 1)[-1].strip().casefold()
+    confirmed = latest_message == f"yes, {CONFIRM_ACTION[goal_type]}"
+    other_object = (goal_type in {GoalType.register_invoice, GoalType.register_batch,
+                                  GoalType.check_or_register_invoice}
+                    and _OTHER_OBJECT.search(request.casefold()) is not None and not confirmed)
     unclear = denied = False
     for sentence, question in _sentences(request):
         lower = [token.casefold() for token in sentence]
@@ -179,7 +200,7 @@ def action_evidence(goal_type: GoalType, request: str) -> str:
             if "object" in rule:
                 for token, item in zip(sentence[index + 1:index + 8], lower[index + 1:index + 8]):
                     if rule["object"].match(item):
-                        return "clear"
+                        return "unclear" if other_object else "clear"
                     if item in _FILLER or token[:1].isupper() or item.isdigit():
                         continue
                     break
@@ -195,7 +216,7 @@ def action_evidence(goal_type: GoalType, request: str) -> str:
                     if _NEGATION & set(before[-5:]):
                         denied = True
                     else:
-                        return "clear"
+                        return "unclear" if other_object else "clear"
                     continue
                 unclear = True
     return "none" if denied else ("unclear" if unclear else "none")
@@ -267,6 +288,17 @@ async def commit_goal(
     elif proposal.goal_type != GoalType.export_invoices:
         return GoalRejection("needs_clarification", "Name a supplier")
 
+    if proposal.goal_type == GoalType.export_invoices and not supplier:
+        named = [row for row in suppliers if any(
+            re.search(rf"(?<!\w){re.escape(term.strip().casefold())}(?!\w)", request)
+            for term in [row["name"], *row.get("aliases", "").split(",")] if term.strip()
+        )]
+        if named:
+            if len(named) > 1:
+                return GoalRejection("needs_clarification", "Export supplier is ambiguous",
+                                     [row["name"] for row in named])
+            return GoalRejection("request_mismatch", "Export must keep the named supplier filter")
+
     latest_requested = bool(re.search(r"\b(latest|newest|most recent)\b", request))
     required_selectors = {
         GoalType.check_or_register_invoice: "invoice_number",
@@ -288,6 +320,17 @@ async def commit_goal(
         not proposal.invoice_number or proposal.invoice_number.casefold() not in request
     ):
         return GoalRejection("request_mismatch", "Invoice number must appear in request")
+    if proposal.goal_type in {GoalType.register_invoice, GoalType.check_or_register_invoice}:
+        requested_numbers = set(_INVOICE_NUMBER.findall(request.upper()))
+        proposed_number = proposal.invoice_number.upper() if proposal.invoice_number else None
+        if len(requested_numbers) > 1:
+            return GoalRejection("needs_confirmation", "Which invoice number should be registered?",
+                                 sorted(requested_numbers))
+        if requested_numbers and (proposal.selector == "latest" or
+                                  proposed_number not in requested_numbers):
+            return GoalRejection("request_mismatch", "Proposed invoice differs from the request")
+        if proposed_number and not requested_numbers:
+            return GoalRejection("request_mismatch", "Invoice number must appear in request")
 
     constraints = RequestConstraints(
         supplier_text=proposal.supplier, selector=proposal.selector,
@@ -394,6 +437,8 @@ async def commit_goal(
         due = proposal.due_before
         if not due or not isinstance(due, date):
             return GoalRejection("request_mismatch", "Explicit due-before date required")
+        if not re.search(r"\bdue\s+before\b", request):
+            return GoalRejection("request_mismatch", "Export requires a due-before request")
         if due not in dates_in(request):
             return GoalRejection("request_mismatch", "Export date is not in request")
         frozen_filter = {"due_before": due.isoformat()}

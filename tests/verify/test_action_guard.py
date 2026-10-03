@@ -79,6 +79,27 @@ def test_instruction_to_ask_first_does_not_authorize_the_write():
                            "Before you register invoice LS-1042, ask me first.") == "unclear"
 
 
+def test_long_distance_negation_and_parentheses_block_registration():
+    for request_text in (
+        "Do not under any circumstances register the latest invoice from Larkspur Supplies.",
+        "Do not (under any circumstances) register the latest invoice from Larkspur Supplies.",
+    ):
+        assert action_evidence(GoalType.register_invoice, request_text) == "none"
+
+
+@pytest.mark.parametrize("request_text", [
+    "Record a refund for invoice LS-1042 and put it in the register.",
+    "Cancel invoice LS-1042 and record it as void.",
+])
+def test_unsupported_object_cannot_become_an_invoice_write(request_text):
+    assert action_evidence(GoalType.register_invoice, request_text) != "clear"
+
+
+def test_negation_in_another_clause_does_not_cancel_a_positive_invoice_request():
+    assert action_evidence(GoalType.register_invoice,
+                           "Don't export; just register the latest invoice from Larkspur Supplies.") == "clear"
+
+
 @pytest.mark.asyncio
 async def test_commit_goal_requires_confirmation_for_check_only_and_refuses_explicit_no_write():
     from tests.verify.util import FakeProbes
