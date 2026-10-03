@@ -199,13 +199,21 @@ export interface Budget {
   estimated: true;
 }
 
+/** candidates: the choices code found; suggested: this user's earlier choice (memory). */
+export interface Question {
+  question_id: string;
+  text: string;
+  candidates?: string[];
+  suggested?: string;
+}
+
 export interface RunDetail {
   summary: RunSummary;
   contract: GoalContract | null;
   plan: { steps: PlanStep[]; revision: number };
   facts: Fact[];
   approvals: Approval[];
-  question: { question_id: string; text: string } | null;
+  question: Question | null;
   verification: VerificationResult | null;
   pending: PendingMutation[];
   budget: Budget;
@@ -283,7 +291,7 @@ export type RunEvent =
   | EventBase<"contract", { action: "committed" | "revised" | "rejected"; reason?: string; contract?: GoalContract }>
   | EventBase<"gate", GateData>
   | EventBase<"approval", Approval>
-  | EventBase<"question", { question_id: string; text: string }>
+  | EventBase<"question", Question>
   | EventBase<"answer", { question_id: string; text: string; by: string }>
   | EventBase<"pending", PendingMutation>
   | EventBase<"verification", VerificationResult>

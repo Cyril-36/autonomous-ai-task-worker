@@ -91,7 +91,7 @@ type Budget = {
 | `contract` | `{action: "committed" \| "revised" \| "rejected", reason?: string, contract?: GoalContract}` |
 | `gate` | `{step: number, allowed: boolean, code: GateCode, reason: string, mutation?: {action_url: string, fields: object, target_label?: string}}` |
 | `approval` | `Approval` (emitted on request and on every status change) |
-| `question` | `{question_id: string, text: string}` |
+| `question` | `{question_id: string, text: string, candidates?: string[], suggested?: string}` (`suggested`: this user's earlier choice from memory; never applied automatically) |
 | `answer` | `{question_id: string, text: string, by: string}` |
 | `pending` | `PendingMutation` (emitted on every state change) |
 | `verification` | `VerificationResult` (emitted after each verify round) |

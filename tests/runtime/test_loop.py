@@ -580,6 +580,12 @@ async def test_task_level_tools_complete_intake_on_either_form_layout(tmp_path, 
             assert db.execute("SELECT COUNT(*) FROM invoices WHERE invoice_number='LS-1042'"
                               ).fetchone()[0] == 1
         assert len(steps) == 7
+        plans = [event.data for event in store.events("r1") if event.type == "plan"]
+        assert plans and all(step["status"] == "done" for step in plans[-1]["steps"])
+        assert all(isinstance(step, dict) for plan in plans for step in plan["steps"])
+        summary = next(event.data["summary"] for event in store.events("r1")
+                       if event.type == "verification")
+        assert summary.startswith("Saved invoice from Larkspur Supplies to the register: LS-1042 (")
     finally:
         await probes.close()
         await browser.close()
@@ -734,3 +740,42 @@ async def test_error_pages_and_formless_pages_give_actionable_feedback(tmp_path)
         register_server.should_exit = True
         await portal_task
         await register_task
+
+
+@pytest.mark.asyncio
+async def test_memory_suggests_a_users_earlier_choice_but_still_asks(tmp_path):
+    class ProbesWithPolicy(FakeProbes):
+        async def register_policy(self):
+            return {"version": 1, "threshold": "100000.00"}
+
+    store = Store(tmp_path / "worker.db")
+    ravi = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi", role="operator")
+    asha = Principal(user_id="asha", email="asha@example.com", display_name="Asha", role="admin")
+    ambiguous = {"tool": "commit_goal", "arguments": {"contract": {
+        "requested_action": "register latest", "goal_type": "register_invoice",
+        "supplier": "Larkspur", "selector": "latest"}}}
+
+    def worker(script):
+        return WorkerLoop(store=store, provider=FakeProvider(script), browser=None,
+                          probes=ProbesWithPolicy(), workspace=None,
+                          portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+
+    def last_question(run_id):
+        return [event.data for event in store.events(run_id) if event.type == "question"][-1]
+
+    store.create_run("r1", "Register the latest invoice from Larkspur", ravi, "fake")
+    first = worker([ambiguous, {"tool": "ask_user", "arguments": {"question": "?"}}])
+    await first.run("r1")
+    assert "Which one did you mean" in last_question("r1")["text"]
+    assert "suggested" not in last_question("r1")
+    await first.run("r1", answer="Larkspur Supplies please")
+
+    store.create_run("r2", "Log the newest Larkspur bill", ravi, "fake")
+    await worker([ambiguous]).run("r2")
+    assert store.get_run("r2").status == "awaiting_input"
+    assert last_question("r2")["suggested"] == "Larkspur Supplies"
+    assert "Last time you chose Larkspur Supplies" in last_question("r2")["text"]
+
+    store.create_run("r3", "Log the newest Larkspur bill", asha, "fake")
+    await worker([ambiguous]).run("r3")
+    assert "suggested" not in last_question("r3")

@@ -245,7 +245,7 @@ export function buildScript(runId: string, request: string, user: { email: strin
       step("browser_navigate", "Opened the portal invoice list", { url: `${P}/invoices` }),
       step("browser_click", "Searched suppliers for Larkspur: 2 matches", { url: `${P}/invoices?q=larkspur` }),
       { type: "contract", data: { action: "rejected", reason: "Two suppliers match \"Larkspur\": Larkspur Supplies and Larkspur Logistics. The goal can't be committed until one is chosen." } },
-      { type: "question", data: { question_id: "q1", text: "Two suppliers match \"Larkspur\": Larkspur Supplies and Larkspur Logistics. Which one did you mean?" } },
+      { type: "question", data: { question_id: "q1", text: "Supplier name is ambiguous. Which one did you mean: Larkspur Supplies or Larkspur Logistics?", candidates: ["Larkspur Supplies", "Larkspur Logistics"] } },
       status("awaiting_input"),
       {
         pause: "answer",

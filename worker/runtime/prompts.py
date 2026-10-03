@@ -111,7 +111,9 @@ def build_messages(request: str, *, phase: str, contract, observations: list[str
                          f"Policy version {policy.get('version')}: saves of INR "
                          f"{policy.get('threshold')} or more need the user's approval."})
     if plan:
-        messages.append({"role": "system", "content": "Your plan: " + "; ".join(map(str, plan))})
+        messages.append({"role": "system", "content": "Plan and progress:\n" + "\n".join(
+            f"{index}. [{step['status']}] {step['text']}" if isinstance(step, dict)
+            else f"{index}. {step}" for index, step in enumerate(plan, 1))})
     if facts:
         messages.append({"role": "system", "content": "Facts:\n" + "\n".join(
             _fact_line(item) for item in facts)})

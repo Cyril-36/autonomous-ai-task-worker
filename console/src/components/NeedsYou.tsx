@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
-import type { Approval } from "../api/types";
+import type { Approval, Question } from "../api/types";
 import { fieldName, fieldValue, sentence } from "../format";
 
 function useCountdown(iso: string): string {
@@ -101,7 +101,7 @@ export function ApprovalCard({ runId, approval }: ApprovalCardProps) {
 
 interface QuestionCardProps {
   runId: string;
-  question: { question_id: string; text: string };
+  question: Question;
 }
 
 export function QuestionCard({ runId, question }: QuestionCardProps) {
@@ -109,28 +109,50 @@ export function QuestionCard({ runId, question }: QuestionCardProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!text.trim()) {
+  async function send(answer: string) {
+    if (!answer.trim()) {
       setError("Type an answer first.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await api.answer(runId, text.trim());
+      await api.answer(runId, answer.trim());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "The answer wasn't sent. Try again.");
       setBusy(false);
     }
   }
 
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    void send(text);
+  }
+
+  const candidates = question.candidates ?? [];
+
   return (
     <form className="card-wait" aria-labelledby="question-h" onSubmit={submit}>
       <h2 id="question-h">It needs an answer to continue</h2>
       <p style={{ fontSize: 14, color: "var(--ink)" }}>{question.text}</p>
+      {candidates.length > 0 && (
+        <div className="actions" aria-label="Choices">
+          {candidates.map((choice) => (
+            <button
+              key={choice}
+              type="button"
+              className={`btn${choice === question.suggested ? " btn-primary" : ""}`}
+              disabled={busy}
+              onClick={() => void send(choice)}
+            >
+              {choice}
+              {choice === question.suggested ? " (your earlier choice)" : ""}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="field">
-        <label htmlFor="answer">Your answer</label>
+        <label htmlFor="answer">{candidates.length > 0 ? "Or type an answer" : "Your answer"}</label>
         <input id="answer" className="input" value={text} onChange={(e) => setText(e.target.value)} disabled={busy} autoFocus />
       </div>
       {error && <p className="error-text" role="alert">{error}</p>}

@@ -132,6 +132,8 @@ export function FactsPanel({ facts, order }: { facts: Record<string, Fact>; orde
                   {f.value !== shown(f) && <>shown as “{f.value}”, </>}
                   {f.url.startsWith("goal:") ? (
                     "fixed by the locked goal"
+                  ) : f.url.startsWith("memory:") ? (
+                    "remembered for next time"
                   ) : (
                     <>
                       <a href={f.url} target="_blank" rel="noreferrer">

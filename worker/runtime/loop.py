@@ -30,6 +30,8 @@ from worker.policy.gate import check_file_write, check_mutation
 from worker.policy.pending import begin_pending, reconcile
 from worker.policy.provenance import record_fact
 from worker.runtime.apps import Apps
+from worker.runtime.memory import Memory, chosen_candidate
+from worker.runtime.plan import goal_plan
 from worker.runtime.prompts import build_messages
 from worker.runtime.recovery import reconcile_all
 from worker.runtime.stall import StallDetector
@@ -37,6 +39,7 @@ from worker.runtime.state import RuntimeState, load_state, save_state
 from worker.tools.files import WorkspaceFiles
 from worker.tools.registry import tools_for_phase, validate_call
 from worker.verify.goals import GoalRejection, commit_goal, revise_goal
+from worker.verify.summary import describe_outcome
 from worker.verify.verifier import verify
 
 PAGE_CHANGING = {"browser_click", "open_page", "fill_form", "submit_form"}
@@ -117,6 +120,7 @@ class WorkerLoop:
         # evaluation of request understanding only: end the run once a goal is locked
         self.stop_after_goal = stop_after_goal
         self.apps = Apps.load({"portal": portal_url, "register": register_url})
+        self.memory = Memory(store.path) if store is not None else None
 
     def _emit(self, run_id: str, kind: str, data: dict) -> None:
         self.store.append_event(run_id, kind, data)
@@ -160,6 +164,7 @@ class WorkerLoop:
             if answer:
                 state.user_messages.append(answer)
                 state.feedback.append("User answered: " + answer)
+                self._remember_choice(state, run.principal.user_id, answer)
             if self.probes:
                 decisions = await reconcile_all(self.store, run_id, self.probes)
                 if any(item.pending.state == "conflict" for item in decisions):
@@ -264,6 +269,8 @@ class WorkerLoop:
                                                 if result.get("screenshot") else {})})
                 self.store.update_run(run_id, steps=state.steps)
                 state.feedback.append(action_line(state.steps, name, self._safe_args(args), result))
+                if not result.get("terminal"):
+                    self._refresh_plan(state)
                 self._checkpoint(state)
                 if name in PAGE_CHANGING and result["ok"]:
                     changed_page = True
@@ -359,7 +366,8 @@ class WorkerLoop:
                 # only real ambiguity goes to the user; a goal missing something the
                 # request contains goes back to the model to fix
                 if contract.code == "needs_clarification" and contract.candidates:
-                    return self._question(state, contract.reason, contract.candidates)
+                    return self._question(state, contract.reason, contract.candidates,
+                                          about=proposal.supplier)
                 if contract.code == "unsupported":
                     self._terminal(state, RunStatus.unsupported, contract.reason)
                     return {"ok": False, "summary": contract.reason, "terminal": True}
@@ -394,9 +402,14 @@ class WorkerLoop:
                                                    "contract": revised.model_dump(mode="json")})
             return {"ok": True, "summary": "Goal criteria revised", "progress": True}
         if name == "update_plan":
-            state.plan = args["steps"]
-            self._emit(state.run_id, "plan", {"steps": state.plan, "revision": 1,
-                                              "reason": "Model plan"})
+            if state.contract is not None:
+                return {"ok": True, "summary": "The plan now follows the locked goal and its "
+                                               "progress is tracked from evidence."}
+            state.plan = [{"text": str(step), "status": "todo"} for step in args["steps"]][:12]
+            state.plan_revision += 1
+            self._emit(state.run_id, "plan", {"steps": state.plan,
+                                              "revision": state.plan_revision,
+                                              "reason": "Sketched while working out the goal"})
             return {"ok": True, "summary": "Plan updated"}
         if name == "files_list":
             return {"ok": True, "summary": json.dumps(self.workspace.list(args["path"]))}
@@ -417,6 +430,11 @@ class WorkerLoop:
                 return {"ok": False, "summary": "No locked goal", "terminal": True}
             self._phase(state, "verify")
             result = await verify(state.contract, self.probes, export_path=state.export_path)
+            result = result.model_copy(update={"summary": describe_outcome(
+                state.contract, state.facts, result, export_path=state.export_path,
+                export_rows=state.export_rows)})
+            if result.passed:
+                self._refresh_plan(state, verified=True)
             self._emit(state.run_id, "verification", result.model_dump(mode="json"))
             if result.status in {RunStatus.completed, RunStatus.partial}:
                 self._terminal(state, result.status, result.summary)
@@ -432,6 +450,36 @@ class WorkerLoop:
             self._phase(state, "execute")
             return {"ok": False, "summary": result.summary}
         raise ValueError("Unknown tool")
+
+    def _remember_choice(self, state: RuntimeState, user_id: str, answer: str) -> None:
+        """Company memory: keep what this user meant, to suggest it next time."""
+        pending, state.pending_clarification = state.pending_clarification, None
+        if not pending or not pending.get("about") or self.memory is None:
+            return
+        choice = chosen_candidate(answer, pending["candidates"])
+        if choice:
+            self.memory.remember(user_id, "choice", pending["about"], choice)
+            self._emit(state.run_id, "fact", {
+                "key": "memory." + "_".join(pending["about"].casefold().split()),
+                "value": f"{pending['about']} means {choice}", "normalized": choice,
+                "type": "text", "observation_id": "memory", "url": "memory://user",
+                "doc_id": None, "revision": None, "field_locator": "Remembered for next time",
+                "step": state.steps})
+
+    def _refresh_plan(self, state: RuntimeState, *, verified: bool = False) -> None:
+        """Re-derive the locked goal's plan from evidence; emit it only when it changed."""
+        if state.contract is None:
+            return
+        steps = goal_plan(state.contract, self.apps, state, verified=verified)
+        if steps == state.plan:
+            return
+        texts_changed = [step["text"] for step in steps] != [step["text"] for step in state.plan]
+        if texts_changed:
+            state.plan_revision += 1
+        state.plan = steps
+        self._emit(state.run_id, "plan", {"steps": steps, "revision": state.plan_revision,
+                                          **({"reason": "Planned from the locked goal"}
+                                             if texts_changed else {})})
 
     @staticmethod
     def _page_summary(observation) -> str:
@@ -551,12 +599,25 @@ class WorkerLoop:
             raise ValueError("Stale ref")
         return matches[0]
 
-    def _question(self, state: RuntimeState, question: str, candidates: list[str]) -> dict:
+    def _question(self, state: RuntimeState, question: str, candidates: list[str],
+                  about: str | None = None) -> dict:
+        suggested = None
+        if candidates:
+            question = (f"{question.rstrip('.')}. Which one did you mean: "
+                        f"{' or '.join(candidates)}?")
+            if about and self.memory:
+                user_id = self.store.get_run(state.run_id).principal.user_id
+                remembered = self.memory.recall(user_id, "choice", about)
+                if remembered in candidates:
+                    suggested = remembered
+                    question += f" Last time you chose {remembered}."
+            state.pending_clarification = {"about": about, "candidates": candidates}
         question_id = uuid4().hex
         self.store.save_question(question_id, state.run_id, question)
         self.store.update_run(state.run_id, status="awaiting_input")
         self._emit(state.run_id, "question", {"question_id": question_id, "text": question,
-                                              "candidates": candidates})
+                                              "candidates": candidates,
+                                              **({"suggested": suggested} if suggested else {})})
         self._emit(state.run_id, "run_status", {"status": "awaiting_input",
                                                   "reason": question})
         return {"ok": True, "summary": question, "pause": True}
@@ -579,6 +640,7 @@ class WorkerLoop:
         )
         self.workspace.write_csv(args["name"], rows)
         state.export_path = intent.path
+        state.export_rows = len(rows)
         return {"ok": True, "summary": f"Wrote {len(rows)} export rows", "progress": True}
 
     async def _submit(self, state: RuntimeState, ref: str) -> dict:

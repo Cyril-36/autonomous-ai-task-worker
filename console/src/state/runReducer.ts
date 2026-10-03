@@ -6,6 +6,7 @@ import type {
   PendingMutation,
   Phase,
   PlanStep,
+  Question,
   RunDetail,
   RunEvent,
   RunStatus,
@@ -30,7 +31,7 @@ export interface RunView {
   contract: GoalContract | null;
   approvals: Record<string, Approval>;
   openApproval: Approval | null;
-  question: { question_id: string; text: string } | null;
+  question: Question | null;
   pending: Record<string, PendingMutation>;
   verification: VerificationResult | null;
   verificationRounds: number;
