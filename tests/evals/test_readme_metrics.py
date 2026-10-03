@@ -15,6 +15,6 @@ def test_readme_metrics_are_copied_from_reports(tmp_path: Path):
     update_readme(readme, fake, live)
     text = readme.read_text()
     assert "| Task success | 2/3 |" in text
-    assert "| Task success | 1/2 |" in text
+    assert "| Task success | 1/2 |" in text and "Development pass, live" in text
     assert "Before" in text and "After" in text
     assert text.count("<!-- EVAL_METRICS_START -->") == 1
