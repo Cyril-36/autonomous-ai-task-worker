@@ -1,0 +1,9 @@
+<!doctype html><html><head><title>{{ record.invoice_number }}</title></head><body>
+<article data-doc-id="{{ record.id }}" data-revision="{{ record.version }}" data-kind="record"><h1>{{ record.invoice_number }}</h1><dl>
+<dt>Supplier</dt><dd>{{ record.supplier_id }}</dd>
+<dt>Invoice number</dt><dd>{{ record.invoice_number }}</dd>
+<dt>Amount</dt><dd>{{ record.amount }}</dd>
+<dt>Currency</dt><dd>{{ record.currency }}</dd>
+<dt>Due date</dt><dd>{{ record.due_date }}</dd>
+</dl></article><a href="/invoices/{{ record.id }}/edit">Edit</a>
+</body></html>

@@ -1,0 +1,4 @@
+<!doctype html><html><head><title>Invoice register</title></head><body>
+<h1>Invoice register</h1><a href="/invoices/new">New invoice</a> <a href="/suppliers">Suppliers</a> <a href="/policy">Policy</a>
+<ul>{% for row in rows %}<li><a href="/invoices/{{ row.id }}">{{ row.invoice_number }}</a> — {{ row.supplier_id }} — ₹{{ row.amount }} — due {{ row.due_date }}</li>{% endfor %}</ul>
+</body></html>

@@ -1,0 +1,19 @@
+<!doctype html><html><head><title>{{ 'Edit' if record else 'New' }} invoice</title></head><body>
+<h1>{{ 'Edit' if record else 'New' }} invoice</h1>
+<form method="post" action="{{ '/invoices/' ~ record.id if record else '/invoices' }}" id="invoice-form">
+<input type="hidden" name="form_token" value="{{ token }}">
+{% if record %}<input type="hidden" name="version" value="{{ record.version }}">{% endif %}
+{% if variant == 'b' %}
+<label>Payment due <input name="due_date" type="date" value="{{ record.due_date if record else '' }}"></label>
+<label>Total <input name="amount" value="{{ record.amount if record else '' }}"></label>
+{% endif %}
+<label>Supplier <select name="supplier_id">{% for supplier in suppliers %}<option value="{{ supplier.id }}" {% if record and record.supplier_id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>{% endfor %}</select></label>
+<label>Invoice number <input name="invoice_number" value="{{ record.invoice_number if record else '' }}"></label>
+{% if variant != 'b' %}
+<label>Amount <input name="amount" value="{{ record.amount if record else '' }}"></label>
+<label>Due date <input name="due_date" type="date" value="{{ record.due_date if record else '' }}"></label>
+{% endif %}
+<label>Currency <select name="currency"><option value="INR">INR</option></select></label>
+<label>Source document <input name="source_doc_id" value="{{ record.source_doc_id if record else '' }}"></label>
+<button type="submit">{{ 'Record invoice' if variant == 'b' else 'Save' }}</button>
+</form></body></html>

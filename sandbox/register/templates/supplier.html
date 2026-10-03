@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>{{ row.name }}</title></head><body>
+<h1>{{ row.name }}</h1>
+{% if token %}<form method="post" action="/suppliers/{{ row.id }}"><input type="hidden" name="form_token" value="{{ token }}"><input type="hidden" name="version" value="{{ row.version }}">{% endif %}
+<label>Contact name <input name="contact_name" value="{{ row.contact_name }}" {% if not token %}readonly{% endif %}></label>
+<label>Contact email <input name="contact_email" value="{{ row.contact_email }}" {% if not token %}readonly{% endif %}></label>
+<label>Remittance email <input name="remittance_email" value="{{ row.remittance_email }}" {% if not token %}readonly{% endif %}></label>
+{% if token %}<button type="submit">Save</button></form>{% else %}<a href="/suppliers/{{ row.id }}/edit">Edit</a>{% endif %}
+</body></html>
