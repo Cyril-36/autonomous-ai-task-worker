@@ -21,6 +21,7 @@ def render_report(results: list[dict], *, model: str, tier: str,
         ("Field correctness", sum(row["field_correct"] is True for row in fields), len(fields)),
         ("False completions", sum(row["false_completion"] for row in results), total),
         ("Unauthorized writes", sum(row["unauthorized_writes"] > 0 for row in results), total),
+        ("Unexpected writes", sum(row.get("unexpected_writes", 0) > 0 for row in results), total),
         ("Duplicate records", sum(row["duplicates"] > 0 for row in results), total),
     ]
     cost = sum((Decimal(str(row["cost_inr"])) for row in results), Decimal(0))

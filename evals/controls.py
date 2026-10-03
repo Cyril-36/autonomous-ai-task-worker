@@ -157,6 +157,7 @@ async def run_control(case: dict, *, browser, probes, portal_url: str,
         "expected_status": "pass", "field_correct": None,
         "saved_record_present": False,
         "false_completion": False, "unauthorized_writes": max(0, after - before),
+        "unexpected_writes": max(0, after - before),
         "duplicates": 0, "tool_calls": 0, "latency_s": 0.0, "cost_inr": "0",
         "export_correct": None,
     }

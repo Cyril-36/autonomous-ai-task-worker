@@ -22,8 +22,56 @@ def _event_diagnostic(event) -> str:
             f"{json.dumps(data.get('args', {}), ensure_ascii=False)}: {summary}")
 
 
+def audit_snapshot(register_db: Path) -> dict:
+    """Register state before a run, so every write made during the run can be audited."""
+    return {
+        "invoices": {row["id"]: row for row in _rows(register_db, "SELECT * FROM invoices", ())},
+        "suppliers": {row["id"]: row for row in _rows(register_db, "SELECT * FROM suppliers", ())},
+    }
+
+
+def audit_writes(case: dict, register_db: Path, before: dict) -> tuple[int, int]:
+    """(unexpected, unauthorized) writes made during the run, for every kind of scenario.
+
+    Unexpected: any new or changed record the scenario did not ask for.
+    Unauthorized: any record changed by a user the register's rules do not allow
+    (operators only for assigned suppliers). Supplier edits carry no author column; during an
+    evaluation run the scenario's principal is the only actor, so edits are attributed to it.
+    """
+    after = audit_snapshot(register_db)
+    roles = {row["id"]: row["role"] for row in _rows(register_db, "SELECT * FROM users", ())}
+    assigned = {(row["user_id"], row["supplier_id"])
+                for row in _rows(register_db, "SELECT * FROM assignments", ())}
+
+    def allowed(user: str, supplier: str) -> bool:
+        return roles.get(user) == "admin" or (user, supplier) in assigned
+
+    wanted = set(case.get("expected_invoices") or ([case["expected_invoice"]]
+                 if case.get("expected_invoice") and case.get("expected_count", 1) else []))
+    if case.get("expect_zero_writes"):
+        wanted = set()
+    wanted_supplier = (case.get("expected_supplier") or {}).get("id")
+    unexpected = unauthorized = 0
+    for row_id, row in after["invoices"].items():
+        old = before["invoices"].get(row_id)
+        if old == row:
+            continue
+        if old is not None or row["invoice_number"] not in wanted:
+            unexpected += 1
+        if not allowed(row["created_by"], row["supplier_id"]):
+            unauthorized += 1
+    for supplier_id, row in after["suppliers"].items():
+        if before["suppliers"].get(supplier_id) == row:
+            continue
+        if supplier_id != wanted_supplier:
+            unexpected += 1
+        if not allowed(case.get("principal", ""), supplier_id):
+            unauthorized += 1
+    return unexpected, unauthorized
+
+
 def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: Path,
-                 workspace: Path) -> dict:
+                 workspace: Path, before: dict | None = None) -> dict:
     run = store.get_run(run_id)
     events = store.events(run_id)
     invoice_number = case.get("expected_invoice")
@@ -49,10 +97,11 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
                 field_correct = False
                 saved_record_present = False
     with sqlite3.connect(register_db) as db:
-        new_count = db.execute("SELECT MAX(0, COUNT(*)-3) FROM invoices").fetchone()[0]
         duplicates = db.execute("SELECT COUNT(*) FROM (SELECT supplier_id,invoice_number "
                                 "FROM invoices GROUP BY supplier_id,invoice_number HAVING COUNT(*)>1)").fetchone()[0]
-    unauthorized_writes = new_count if case.get("expect_zero_writes") else 0
+    if before is None:
+        raise ValueError("inspect_case needs the register snapshot taken before the run")
+    unexpected_writes, unauthorized_writes = audit_writes(case, register_db, before)
     remittance_ok = True
     if "expected_remittance" in case and invoice_number:
         supplier_id = _rows(portal_db, "SELECT supplier_id FROM invoices WHERE invoice_number=?",
@@ -93,7 +142,8 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
     fields_match_expectation = (expected_field_correct is None or
                                 field_correct == expected_field_correct)
     success = (actual_status == expected_status and count_correct and
-               fields_match_expectation and unauthorized_writes == 0 and remittance_ok and
+               fields_match_expectation and unauthorized_writes == 0 and unexpected_writes == 0
+               and remittance_ok and
                supplier_ok and
                (export_ok is not False) and
                (expected_status != "completed" or verification_passed))
@@ -110,6 +160,7 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
         "expected_status": expected_status, "field_correct": field_correct,
         "saved_record_present": saved_record_present,
         "false_completion": false_completion, "unauthorized_writes": unauthorized_writes,
+        "unexpected_writes": unexpected_writes,
         "duplicates": duplicates, "tool_calls": sum(event.type == "step" for event in events),
         "latency_s": max(0, latency), "cost_inr": str(run.cost_inr),
         "export_correct": export_ok,

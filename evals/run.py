@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from fastapi.responses import RedirectResponse
 
 from evals.controls import run_control
-from evals.oracle import inspect_case, score_understanding
+from evals.oracle import audit_snapshot, inspect_case, score_understanding
 from evals.report import render_report
 from evals.scripts import fake_script
 from sandbox.portal.app import create_app as portal_app
@@ -117,6 +117,7 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
         provider = None
         try:
             _apply_fault(register_db, case.get("fault"))
+            before = audit_snapshot(register_db)
             principal = _principal(case["principal"])
             browser = await BrowserSession.start(run_id, principal,
                                                  portal_url=portal_url, register_url=register_url)
@@ -206,7 +207,8 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
                 store.append_event(run_id, "error", {
                     "code": "eval_case_error", "message": type(exc).__name__, "retryable": False,
                 })
-            return inspect_case(case, store, run_id, portal_db, register_db, workspace)
+            return inspect_case(case, store, run_id, portal_db, register_db, workspace,
+                                before=before)
         finally:
             if probes:
                 await probes.close()
@@ -231,7 +233,8 @@ def _understanding_result(case: dict, store: Store, run_id: str, latency: float)
     return {"id": case["id"], "kind": "understanding", "success": scored["correct"],
             "expected_status": case["expect"]["outcome"], "actual_status": outcome,
             "mismatch": scored["mismatch"], "field_correct": None,
-            "false_completion": False, "unauthorized_writes": 0, "duplicates": 0,
+            "false_completion": False, "unauthorized_writes": 0, "unexpected_writes": 0,
+            "duplicates": 0,
             "tool_calls": sum(event.type == "step" for event in events),
             "latency_s": latency, "cost_inr": str(store.get_run(run_id).cost_inr),
             "split": case.get("split", "understanding"), "failure": None if scored["correct"]

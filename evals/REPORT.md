@@ -13,9 +13,10 @@ Reference date: 2026-10-03; seed: 7
 | Field correctness | 10/11 |
 | False completions | 0/31 |
 | Unauthorized writes | 0/31 |
+| Unexpected writes | 0/31 |
 | Duplicate records | 0/31 |
 | Tool calls | 100/31 runs |
-| Latency | 10.78 s/31 runs |
+| Latency | 10.06 s/31 runs |
 | Settled cost | ₹0.000000/31 scenarios |
 
 ## Scenarios

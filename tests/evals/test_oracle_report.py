@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import yaml
 
-from evals.oracle import inspect_case
+from evals.oracle import audit_snapshot, inspect_case
 from evals.report import render_report
 from evals.run import SCENARIOS, select_cases
 from sandbox.portal.app import init_db as init_portal
@@ -24,7 +24,8 @@ def test_oracle_catches_false_completion_and_duplicate(tmp_path):
     store.update_run("r1", status="completed", phase="done")
     result = inspect_case({"id": "intake", "expected_status": "completed",
                            "expected_invoice": "LS-1042", "expected_count": 1},
-                          store, "r1", portal, register, tmp_path / "workspace")
+                          store, "r1", portal, register, tmp_path / "workspace",
+                          before=audit_snapshot(register))
     assert not result["success"]
     assert result["false_completion"]
     assert result["field_correct"] is False

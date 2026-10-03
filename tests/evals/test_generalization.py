@@ -2,7 +2,7 @@ import csv
 import sqlite3
 from datetime import date
 
-from evals.oracle import failure_category, inspect_case, score_understanding
+from evals.oracle import audit_snapshot, failure_category, inspect_case, score_understanding
 from sandbox.portal.app import init_db as init_portal
 from sandbox.register.db import init_db as init_register
 from worker.contracts import Principal
@@ -16,6 +16,7 @@ def _setup(tmp_path):
     store = Store(tmp_path / "worker.db")
     store.create_run("r1", "request", Principal(user_id="meera", email="meera@example.com",
                                                 display_name="Meera", role="operator"), "fake")
+    store.before = audit_snapshot(register)
     return portal, register, store
 
 
@@ -39,11 +40,12 @@ def test_batch_checks_every_expected_invoice(tmp_path):
     portal, register, store = _setup(tmp_path)
     _copy_invoice(portal, register, "KC-702")
     _complete(store)
-    case = {"id": "b", "expected_status": "completed", "expected_invoices": ["KC-702", "KC-703"]}
-    result = inspect_case(case, store, "r1", portal, register, tmp_path / "ws")
+    case = {"id": "b", "expected_status": "completed", "principal": "meera",
+            "expected_invoices": ["KC-702", "KC-703"]}
+    result = inspect_case(case, store, "r1", portal, register, tmp_path / "ws", before=store.before)
     assert not result["success"] and result["false_completion"]
     _copy_invoice(portal, register, "KC-703")
-    assert inspect_case(case, store, "r1", portal, register, tmp_path / "ws")["success"]
+    assert inspect_case(case, store, "r1", portal, register, tmp_path / "ws", before=store.before)["success"]
 
 
 def test_export_accepts_any_single_csv_name(tmp_path):
@@ -60,19 +62,19 @@ def test_export_accepts_any_single_csv_name(tmp_path):
         writer.writerows(rows)
     case = {"id": "e", "expected_status": "completed", "expected_export": "any",
             "due_before": "2026-11-15"}
-    assert inspect_case(case, store, "r1", portal, register, tmp_path / "ws")["export_correct"]
+    assert inspect_case(case, store, "r1", portal, register, tmp_path / "ws", before=store.before)["export_correct"]
 
 
 def test_supplier_contact_expectation(tmp_path):
     portal, register, store = _setup(tmp_path)
     _complete(store)
-    case = {"id": "c", "expected_status": "completed", "expected_supplier": {
+    case = {"id": "c", "expected_status": "completed", "principal": "meera", "expected_supplier": {
         "id": "kestrova-components", "contact_email": "arun@kestrova.example.com"}}
-    assert not inspect_case(case, store, "r1", portal, register, tmp_path / "ws")["success"]
+    assert not inspect_case(case, store, "r1", portal, register, tmp_path / "ws", before=store.before)["success"]
     with sqlite3.connect(register) as db:
         db.execute("UPDATE suppliers SET contact_email='arun@kestrova.example.com' "
                    "WHERE id='kestrova-components'")
-    assert inspect_case(case, store, "r1", portal, register, tmp_path / "ws")["success"]
+    assert inspect_case(case, store, "r1", portal, register, tmp_path / "ws", before=store.before)["success"]
 
 
 def _event(kind, **data):
