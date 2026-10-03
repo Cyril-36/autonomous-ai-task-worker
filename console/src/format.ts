@@ -7,7 +7,7 @@ const STATUS: Record<RunStatus, { label: string; tone: Tone }> = {
   running: { label: "Working", tone: "run" },
   awaiting_input: { label: "Needs your answer", tone: "wait" },
   awaiting_approval: { label: "Needs your approval", tone: "wait" },
-  completed: { label: "Done and verified", tone: "ok" },
+  completed: { label: "Completed", tone: "ok" },
   partial: { label: "Partly done", tone: "wait" },
   blocked: { label: "Blocked", tone: "stop" },
   failed: { label: "Failed", tone: "stop" },
@@ -15,8 +15,21 @@ const STATUS: Record<RunStatus, { label: string; tone: Tone }> = {
   interrupted: { label: "Interrupted, resuming", tone: "wait" },
 };
 
-export function statusMeta(status: RunStatus): { label: string; tone: Tone } {
+/**
+ * "completed" is only shown as verified when a passing verification result exists;
+ * a completed status without one is surfaced as a problem, not as success.
+ */
+export function statusMeta(status: RunStatus, verified?: boolean): { label: string; tone: Tone } {
+  if (status === "completed" && verified === false) return { label: "Completed, not verified", tone: "stop" };
+  if (status === "completed" && verified === true) return { label: "Done and verified", tone: "ok" };
   return STATUS[status] ?? { label: status, tone: "idle" };
+}
+
+/** Server reasons should be sentences; codes like "replay_demo" are made readable rather than shown raw. */
+export function readableReason(reason: string): string {
+  if (!/^[a-z0-9_]+$/.test(reason)) return reason;
+  const words = reason.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1) + ".";
 }
 
 /** "118400.00" -> "₹1,18,400.00" with Indian digit grouping, without float arithmetic. */
@@ -91,3 +104,7 @@ export const GOAL_LABEL: Record<GoalType, string> = {
   export_invoices: "Export invoices",
 };
 
+
+export function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api/client";
 import type { Budget, DemoUser, Principal, RunSummary } from "./api/types";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { RunView } from "./components/RunView";
 import { TopBar } from "./components/Shell";
 import { SignIn } from "./components/SignIn";
@@ -101,7 +102,9 @@ export default function App() {
           <RunList user={user} runs={runs} currentId={runId} />
         </aside>
         {runId ? (
-          <RunView run={run} />
+          <ErrorBoundary key={runId}>
+            <RunView run={run} />
+          </ErrorBoundary>
         ) : (
           <section className="col-main">
             <div className="sheet sheet-pad stack">

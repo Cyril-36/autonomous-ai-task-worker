@@ -174,6 +174,8 @@ h1, h2, h3, p { margin: 0; }
 .phases .done { color: var(--ink-2); }
 .phases .done .bar { background: var(--ink); }
 .phases .now { color: var(--run-ink); font-weight: 600; }
+.phases .skipped .bar { background: repeating-linear-gradient(90deg, var(--rule) 0 6px, transparent 6px 10px); }
+.skip-note { font-size: 11px; color: var(--ink-4); }
 .phases .now .bar { background: var(--act); }
 .conn { font-size: 12px; color: var(--wait-ink); }
 

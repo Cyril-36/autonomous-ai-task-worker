@@ -70,6 +70,13 @@ describe("applyEvent", () => {
     expect(v.phase).toBe("done");
   });
 
+  it("remembers which phases the run actually went through", () => {
+    let v = emptyRunView({ ...summary, phase: "setup" });
+    v = applyEvent(v, ev("phase", { phase: "discover" }));
+    v = applyEvent(v, ev("phase", { phase: "done" }));
+    expect(v.visitedPhases).toEqual(["setup", "discover", "done"]);
+  });
+
   it("keeps plan revisions as history", () => {
     let v = emptyRunView(summary);
     v = applyEvent(v, ev("plan", { steps: [{ text: "a", status: "todo" }], revision: 1 }));

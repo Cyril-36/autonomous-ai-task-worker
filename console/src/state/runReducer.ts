@@ -22,6 +22,8 @@ export interface RunView {
   status: RunStatus;
   statusReason: string | null;
   phase: Phase;
+  /** phases the run actually entered, in order; skipped ones are absent */
+  visitedPhases: Phase[];
   plan: { steps: PlanStep[]; revision: number };
   facts: Record<string, Fact & { step?: number }>;
   factOrder: string[];
@@ -44,6 +46,7 @@ export function emptyRunView(summary: RunSummary): RunView {
     status: summary.status,
     statusReason: null,
     phase: summary.phase,
+    visitedPhases: [summary.phase],
     plan: { steps: [], revision: 0 },
     facts: {},
     factOrder: [],
@@ -91,7 +94,11 @@ export function applyEvent(view: RunView, event: RunEvent): RunView {
     case "run_status":
       return { ...next, status: event.data.status, statusReason: event.data.reason ?? null };
     case "phase":
-      return { ...next, phase: event.data.phase };
+      return {
+        ...next,
+        phase: event.data.phase,
+        visitedPhases: view.visitedPhases.includes(event.data.phase) ? view.visitedPhases : [...view.visitedPhases, event.data.phase],
+      };
     case "cost":
       return { ...next, cost: event.data };
     case "fact": {

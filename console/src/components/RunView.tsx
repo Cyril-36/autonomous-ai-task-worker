@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import { PHASES, type Phase } from "../api/types";
-import { formatInr, shortTime, statusMeta } from "../format";
+import { count, formatInr, readableReason, shortTime, statusMeta } from "../format";
 import { isTerminal, type RunState } from "../state/useRun";
 import { Evidence } from "./Evidence";
 import { Ledger } from "./Ledger";
@@ -16,17 +16,20 @@ const PHASE_LABEL: Record<Phase, string> = {
   done: "Done",
 };
 
-function Phases({ phase }: { phase: Phase }) {
+function Phases({ phase, visited }: { phase: Phase; visited: Phase[] }) {
   const at = PHASES.indexOf(phase);
   return (
     <ol className="phases" aria-label="Progress">
       {PHASES.map((p, i) => {
-        const done = i < at || (p === "done" && phase === "done");
         const now = i === at && p !== "done";
+        const done = !now && visited.includes(p) && (i < at || p === "done");
+        const skipped = i < at && !visited.includes(p);
         return (
-          <li key={p} className={done ? "done" : now ? "now" : ""} aria-current={now ? "step" : undefined}>
+          <li key={p} className={done ? "done" : now ? "now" : skipped ? "skipped" : ""} aria-current={now ? "step" : undefined}>
             <span className="bar" />
             {PHASE_LABEL[p]}
+            {skipped && <span className="sr-only"> (skipped)</span>}
+            {skipped && <span className="skip-note" aria-hidden="true">skipped</span>}
           </li>
         );
       })}
@@ -60,9 +63,15 @@ export function RunView({ run }: RunViewProps) {
   }
   if (!view) return <section className="sheet sheet-pad muted">Loading the run…</section>;
 
-  const meta = statusMeta(view.status);
+  const verified = view.verification?.passed === true;
+  const meta = statusMeta(view.status, view.status === "completed" ? verified : undefined);
   const terminal = isTerminal(view);
-  const reason = view.statusReason ? (REASON_TEXT[view.statusReason] ?? view.statusReason) : null;
+  const unverified = view.status === "completed" && !verified;
+  const reason = unverified
+    ? "The worker reported this run as completed, but no passing verification result arrived, so it is not shown as done."
+    : view.statusReason
+      ? (REASON_TEXT[view.statusReason] ?? readableReason(view.statusReason))
+      : null;
   const working = !terminal && view.status === "running";
   const spent = view.cost?.run_spent_inr ?? view.summary.cost_inr;
   const limit = view.cost?.run_limit_inr ?? run.budget?.run_limit_inr ?? "4.00";
@@ -90,13 +99,13 @@ export function RunView({ run }: RunViewProps) {
             <div className="run-stats">
               <span className={`pill tone-${meta.tone}`} role="status">{meta.label}</span>
               <span>
-                {view.stepCount} steps, about {formatInr(spent)} of {formatInr(limit)}
+                {count(view.stepCount, "step")}, about {formatInr(spent)} of {formatInr(limit)}
               </span>
               {!connected && !terminal && <span className="conn">Reconnecting to live updates…</span>}
             </div>
           </div>
           {reason && <p className={`reason tone-${meta.tone}`}>{reason}</p>}
-          <Phases phase={view.phase} />
+          <Phases phase={view.phase} visited={view.visitedPhases} />
           {!terminal && (
             <div className="actions">
               <button type="button" className="btn btn-quiet" onClick={stop} style={confirmStop ? { color: "var(--stop-ink)" } : undefined}>

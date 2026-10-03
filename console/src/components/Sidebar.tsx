@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { Example, Principal, RunSummary } from "../api/types";
-import { shortTime, statusMeta } from "../format";
+import { count, shortTime, statusMeta } from "../format";
 
 interface ComposerProps {
   onStarted: (run: RunSummary) => void;
@@ -94,7 +94,7 @@ export function RunList({ user, runs, currentId }: RunListProps) {
                     <span className={`pill tone-${meta.tone}`}>{meta.label}</span>
                     <span>
                       {user.role === "admin" && r.principal.user_id !== user.user_id ? `${r.principal.display_name}, ` : ""}
-                      {shortTime(r.created_at)}, {r.steps} steps
+                      {shortTime(r.created_at)}, {count(r.steps, "step")}
                     </span>
                   </span>
                 </a>

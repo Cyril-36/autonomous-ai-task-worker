@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeUrl, formatInr, statusMeta } from "./format";
+import { count, describeUrl, formatInr, readableReason, statusMeta } from "./format";
 
 describe("formatInr", () => {
   it.each([
@@ -20,7 +20,26 @@ describe("describeUrl", () => {
 
 describe("statusMeta", () => {
   it("never calls a run done unless it was verified", () => {
-    expect(statusMeta("completed").label).toBe("Done and verified");
+    expect(statusMeta("completed").label).toBe("Completed");
     expect(statusMeta("partial").tone).toBe("wait");
+  });
+
+  it("flags a completed run that has no passing verification", () => {
+    expect(statusMeta("completed", false)).toEqual({ label: "Completed, not verified", tone: "stop" });
+    expect(statusMeta("completed", true).label).toBe("Done and verified");
+  });
+});
+
+describe("readableReason", () => {
+  it("turns codes into words and leaves sentences alone", () => {
+    expect(readableReason("replay_demo_only")).toBe("Replay demo only.");
+    expect(readableReason("Nothing was saved.")).toBe("Nothing was saved.");
+  });
+});
+
+describe("count", () => {
+  it("pluralizes", () => {
+    expect(count(1, "step")).toBe("1 step");
+    expect(count(12, "step")).toBe("12 steps");
   });
 });

@@ -71,7 +71,7 @@ export function SignIn({ onSignedIn }: SignInProps) {
                 <input type="radio" name="account" value={u.email} checked={email === u.email} onChange={() => setEmail(u.email)} />
                 <span className={`avatar${u.role === "admin" ? " admin" : ""}`} aria-hidden="true">{initials(u.display_name)}</span>
                 <span>
-                  <span className="account-name">{u.display_name}</span>
+                  <span className="account-name">{u.display_name}</span>{" "}
                   <span className="role-tag">{u.role === "admin" ? "Admin" : "Operator"}</span>
                   <div className="account-scope">
                     {u.role === "admin" ? "All suppliers, and can change policy" : u.assigned_suppliers.join(", ") || "No suppliers assigned"}
