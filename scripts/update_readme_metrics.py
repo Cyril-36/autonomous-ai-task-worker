@@ -38,7 +38,7 @@ EVALS = ROOT / "evals"
 if __name__ == "__main__":
     update_readme(ROOT / "README.md", EVALS / "REPORT.md", EVALS / "LIVE_DEV_AUDITED.md", [
         (EVALS / "LIVE_HELDOUT.md", "Held-out tasks, live, run once (writes audited only in refusal cases)"),
-        (EVALS / "LIVE_UNDERSTANDING_AUDITED.md", "Request understanding, live, latest pass"),
+        (EVALS / "LIVE_UNDERSTANDING_GUARD.md", "Request understanding, live, latest pass"),
         (EVALS / "LIVE_UNDERSTANDING_X2.md", "Request understanding, live, two earlier repeats"),
         (EVALS / "LIVE_REPORT.md", "Before generalization: development pass, live"),
     ])
