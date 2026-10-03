@@ -4,7 +4,7 @@ from tests.console.test_api import client_for, login
 def test_sse_replays_from_last_event_and_ends(tmp_path):
     with client_for(tmp_path) as client:
         login(client)
-        run = client.post("/api/runs", json={"request": "Register latest Larkspur invoice"}).json()
+        run = client.post("/api/runs", json={"request": "Register latest Larkspur Supplies invoice"}).json()
         run_id = run["run_id"]
         events = client.get(f"/api/runs/{run_id}/events").json()
         stream = client.get(f"/api/runs/{run_id}/stream", headers={"Last-Event-ID": "1"})

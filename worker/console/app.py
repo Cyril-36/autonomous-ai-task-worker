@@ -81,8 +81,10 @@ def create_app(
              "notes": "Find, save and verify the newest source invoice"},
             {"title": "Existing invoice", "request": "Check whether BF-2291 from Brightfen Paper is registered",
              "notes": "Avoid a duplicate"},
-            {"title": "Ambiguous supplier", "request": "Which Larkspur supplier has the latest invoice?",
+            {"title": "Ambiguous supplier", "request": "Enter the latest invoice from Larkspur.",
              "notes": "Ask for clarification"},
+            {"title": "Export due invoices", "request": "Export invoices due before 2026-11-01",
+             "notes": "Create a CSV after matching the register filter"},
         ]
 
     @app.get("/api/budget")

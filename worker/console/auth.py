@@ -27,7 +27,7 @@ class DemoAuth:
                 "email": email, "display_name": display_name, "role": role,
                 "assigned_suppliers": [names[supplier_id] for user_id, supplier_id in ASSIGNMENTS
                                        if user_id == uid],
-                "password_hint": "Use the local demo password",
+                "password_hint": f"Sandbox default: {uid}-demo (set {uid.upper()}_PASSWORD to change)",
             }
             for uid, email, display_name, role in USERS
         ]

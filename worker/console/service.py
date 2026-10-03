@@ -43,14 +43,19 @@ class RunService:
             raise HTTPException(422, detail=("invalid_request", "Request must be 1–2000 characters"))
         run_id = uuid4().hex
         self.store.create_run(run_id, request.strip(), principal, self.model)
-        self.store.append_event(run_id, "run_status", {"status": "queued", "reason": "replay_demo"})
+        self.store.append_event(run_id, "run_status", {
+            "status": "queued", "reason": "This is a replay preview for the console.",
+        })
         if self.engine == "replay":
             self._replay(run_id, request.strip())
         return self.store.get_run(run_id)
 
     def _replay(self, run_id: str, request: str) -> None:
+        self.store.append_event(run_id, "phase", {"phase": "setup"})
         self.store.update_run(run_id, status="running", phase="discover")
-        self.store.append_event(run_id, "run_status", {"status": "running", "reason": "replay_demo"})
+        self.store.append_event(run_id, "run_status", {
+            "status": "running", "reason": "Showing a scripted run preview.",
+        })
         self.store.append_event(run_id, "phase", {"phase": "discover"})
         plan = [{"text": "Inspect source", "status": "done"},
                 {"text": "Check policy", "status": "doing"},
@@ -63,7 +68,8 @@ class RunService:
         })
         self.store.update_run(run_id, steps=1)
         lowered = request.casefold()
-        if "which larkspur" in lowered or "ambiguous" in lowered:
+        if ("larkspur" in lowered and "supplies" not in lowered
+                and "logistics" not in lowered) or "ambiguous" in lowered:
             question_id = uuid4().hex
             question = "Which supplier do you mean: Larkspur Supplies or Larkspur Logistics?"
             self.store.save_question(question_id, run_id, question)
@@ -82,13 +88,26 @@ class RunService:
             self.store.append_event(run_id, "approval", payload)
             self.store.append_event(run_id, "run_status", {"status": "awaiting_approval"})
         else:
-            self._finish_replay(run_id)
+            self._end_replay(run_id)
 
-    def _finish_replay(self, run_id: str) -> None:
-        self.store.update_run(run_id, status="completed", phase="done")
+    def _end_replay(self, run_id: str) -> None:
+        self.store.update_run(run_id, status="blocked", phase="verify")
+        self.store.append_event(run_id, "phase", {"phase": "verify"})
+        self.store.append_event(run_id, "verification", {
+            "run_id": run_id, "contract_id": "replay-only", "passed": False,
+            "checks": [{
+                "obligation_id": "read_back", "description": "Business result verified by read-back",
+                "passed": False, "expected": "A real saved record", "actual": "No business write in replay",
+                "detail": "Replay is for frontend integration only.",
+            }],
+            "status": "blocked", "summary": "Replay preview has no verified business outcome.",
+            "evidence": [], "remaining": [],
+        })
+        self.store.update_run(run_id, status="blocked", phase="done")
         self.store.append_event(run_id, "phase", {"phase": "done"})
         self.store.append_event(run_id, "run_status", {
-            "status": "completed", "reason": "replay_demo_only_no_business_write",
+            "status": "blocked",
+            "reason": "Replay preview ended without making or verifying a business change.",
         })
 
     def budget(self, run_id: str | None = None) -> dict:
@@ -137,7 +156,7 @@ class RunService:
         self.store.append_event(run_id, "answer", {
             "question_id": question["question_id"], "text": text.strip(), "by": principal.email,
         })
-        self._finish_replay(run_id)
+        self._end_replay(run_id)
 
     def decide(self, run_id: str, approval_id: str, principal: Principal,
                decision: str, note: str | None = None) -> dict:
@@ -162,7 +181,7 @@ class RunService:
         self.store.save_approval(approval_id, run_id, payload)
         self.store.append_event(run_id, "approval", payload)
         if decision == "approve":
-            self._finish_replay(run_id)
+            self._end_replay(run_id)
         else:
             self.store.update_run(run_id, status="blocked", phase="done")
             self.store.append_event(run_id, "run_status", {
@@ -176,5 +195,5 @@ class RunService:
             raise HTTPException(409, detail=("conflict", "Run already ended"))
         self.store.update_run(run_id, status="failed", phase="done")
         self.store.append_event(run_id, "run_status", {
-            "status": "failed", "reason": "cancelled_by_user",
+            "status": "failed", "reason": "You stopped this run.",
         })
