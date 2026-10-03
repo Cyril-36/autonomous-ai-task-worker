@@ -51,7 +51,6 @@ def test_observed_completion_over_max_expands_future_reservation(ledger):
                                    "total_tokens": 11})
     second = ledger.reserve("run1", "test", request)
     assert second.reserved_inr > first.reserved_inr
-    assert ledger.output_bound_enforced("test") is False
 
 
 def test_unaccounted_total_tokens_expand_future_output_reservation(ledger):

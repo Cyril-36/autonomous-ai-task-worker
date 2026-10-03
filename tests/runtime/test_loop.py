@@ -36,17 +36,19 @@ async def test_repeating_an_unchanged_fill_is_not_progress(tmp_path):
     async def no_fill(ref, value):
         raise AssertionError("An unchanged field must not be filled again")
 
-    browser = SimpleNamespace(current=observation, fill=no_fill)
+    async def snapshot():
+        return observation
+
+    browser = SimpleNamespace(current=observation, fill=no_fill, snapshot=snapshot)
     state = RuntimeState("r1", ["Register LS-1042"], set())
     state.facts["invoice_number"] = Fact(
         key="invoice_number", value="LS-1042", normalized="LS-1042",
         type=FactType.text, observation_id="o1", url=observation.url,
         doc_id="ls-1042", revision="1", field_locator="Invoice number")
-    state.fills["Invoice number"] = "LS-1042"
     worker = WorkerLoop(store=None, provider=None, browser=browser, probes=None,
                         workspace=None, portal_url="", register_url="")
-    result = await worker._dispatch(state, "browser_fill",
-                                    {"ref": "e3", "fact_key": "invoice_number"})
+    result = await worker._dispatch(state, "fill_form", {"fields": [
+        {"label": "Invoice number", "fact": "invoice_number"}]})
     assert not result["ok"]
     assert not result["progress"]
 
@@ -64,10 +66,10 @@ async def test_browser_driver_error_is_a_tool_failure_not_a_crashed_run(tmp_path
     principal = Principal(user_id="ravi", email="ravi@example.com",
                           display_name="Ravi", role="operator")
     store.create_run("r1", "Register latest invoice", principal, "fake")
-    browser = SimpleNamespace(page=SimpleNamespace(url="about:blank"),
+    browser = SimpleNamespace(page=SimpleNamespace(url="about:blank"), current=None,
                               navigate=broken_navigate)
     worker = WorkerLoop(store=store, provider=FakeProvider([
-        {"tool": "browser_navigate", "arguments": {"url": "http://portal/invoices"}},
+        {"tool": "open_page", "arguments": {"app": "portal", "page": "invoices"}},
         {"tool": "ask_user", "arguments": {"question": "The page is unavailable. Retry?"}},
     ]), browser=browser, probes=PolicyProbes(), workspace=None,
         portal_url="http://portal", register_url="http://register")
@@ -86,11 +88,10 @@ async def test_navigation_adds_observation_before_next_model_call(tmp_path):
             if self.first:
                 self.first = False
                 return ProviderResponse(None, [
-                    {"name": "browser_navigate", "arguments": {
-                        "url": f"{portal_url}/invoices/ls-1042"}},
-                    {"name": "record_fact", "arguments": {"key": "wrong",
-                        "observation_id": "stale", "field_locator": "Invoice number",
-                        "type": "text"}},
+                    {"name": "open_page", "arguments": {
+                        "app": "portal", "page": "invoice", "id": "ls-1042"}},
+                    {"name": "record_facts", "arguments": {
+                        "labels": ["Invoice number"], "observation_id": "stale"}},
                 ], "fake", None)
             return await super().complete(messages=messages, tools=tools,
                                           max_tokens=max_tokens, run_id=run_id)
@@ -112,18 +113,17 @@ async def test_navigation_adds_observation_before_next_model_call(tmp_path):
                     workspace=tmp_path / "workspace")
     try:
         worker = WorkerLoop(store=store, provider=MultiProvider([
-            {"tool": "record_fact", "arguments": {"key": "number",
-                "observation_id": "OBS", "field_locator": "Invoice number", "type": "text"}},
+            {"tool": "record_facts", "arguments": {"labels": ["Invoice number"]}},
         ]), browser=browser, probes=probes, workspace=None,
             portal_url=portal_url, register_url=register_url)
         await worker.run("r1", max_steps=2)
         assert any(event.type == "fact" for event in store.events("r1"))
-        assert not any(event.type == "step" and event.data["tool"] == "record_fact"
-                       and event.data["args"].get("key") == "wrong"
+        assert not any(event.type == "step" and event.data["tool"] == "record_facts"
+                       and event.data["args"].get("observation_id") == "stale"
                        for event in store.events("r1"))
         state = load_state(store.path, "r1")
-        repeated = await worker._dispatch(state, "browser_navigate",
-                                          {"url": f"{portal_url}/invoices/ls-1042"})
+        repeated = await worker._dispatch(state, "open_page",
+                                          {"app": "portal", "page": "invoice", "id": "ls-1042"})
         assert not repeated["ok"]
     finally:
         await probes.close()
@@ -279,46 +279,37 @@ async def _serve(app):
 def _intake_script(portal_url, register_url, *, supplier="Larkspur Supplies",
                    number="LS-1042", fault=None):
     approval_case = fault in {"approval", "reject"}
-    script = [
-        {"tool": "browser_navigate", "arguments": {"url": f"{portal_url}/invoices"}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_click", "target": number},
-        {"tool": "browser_snapshot"},
-    ]
-    script += [{"tool": "record_fact", "arguments": {
-        "key": key, "observation_id": "OBS", "field_locator": label, "type": kind,
-    }} for key, label, kind in [
-        ("number", "Invoice number", "text"), ("amount", "Amount", "amount"),
-        ("due", "Due date", "date"), ("currency", "Currency", "text"),
-    ]]
-    proposal = {"goal_type": "register_invoice", "supplier": supplier,
+    doc = number.lower()
+    proposal = {"requested_action": "register an invoice", "goal_type": "register_invoice",
+                "supplier": supplier,
                 "selector": "invoice_number" if approval_case else "latest"}
     if approval_case:
         proposal["invoice_number"] = number
-    script += [{"tool": "commit_goal", "arguments": {"contract": proposal}}]
+    script = [
+        {"tool": "commit_goal", "arguments": {"contract": proposal}},
+        {"tool": "open_page", "arguments": {"app": "portal", "page": "invoices"}},
+        {"tool": "browser_click", "target": number},
+        {"tool": "record_facts", "arguments": {
+            "labels": ["Invoice number", "Amount", "Due date", "Currency"]}},
+    ]
+    amount, due = ("Total", "Payment due") if fault == "layout_b" else ("Amount", "Due date")
     write_steps = [
-        {"tool": "browser_navigate", "arguments": {"url": f"{register_url}/invoices/new"}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_select", "target": "Supplier", "arguments": {"option": supplier}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_fill", "target": "Invoice number", "arguments": {"fact_key": "number"}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_fill", "target": "Total" if fault == "layout_b" else "Amount",
-         "arguments": {"fact_key": "amount"}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_fill", "target": "Payment due" if fault == "layout_b" else "Due date",
-         "arguments": {"fact_key": "due"}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_fill", "target": "Source document",
-         "arguments": {"free_text": number.lower()}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_click", "target": "Record invoice" if fault == "layout_b" else "Save"},
+        {"tool": "open_page", "arguments": {"app": "register", "page": "new_invoice"}},
+        {"tool": "fill_form", "arguments": {"fields": [
+            {"label": "Supplier", "fact": "goal.supplier"},
+            {"label": "Invoice number", "fact": f"{doc}.invoice_number"},
+            {"label": amount, "fact": f"{doc}.amount"},
+            {"label": due, "fact": f"{doc}.due_date"},
+            {"label": "Currency", "fact": f"{doc}.currency"},
+            {"label": "Source document", "fact": f"{doc}.document_id"},
+        ]}},
+        {"tool": "submit_form"},
     ]
     script += write_steps
     if fault == "fail_next_save":
         script += write_steps
     if approval_case:
-        script += [{"tool": "browser_snapshot"}, {"tool": "browser_click", "target": "Save"}]
+        script += [{"tool": "submit_form"}]
     script += [{"tool": "finish", "arguments": {"summary": "Done"}}]
     return script
 
@@ -496,29 +487,24 @@ async def test_contact_update_requires_approval_and_verifies_source(tmp_path):
                     probe_key="probe-demo", register_session=session,
                     workspace=tmp_path / "workspace", store=store)
     script = [
-        {"tool": "browser_navigate", "arguments": {"url": f"{portal_url}/messages/msg-larkspur"}},
-        {"tool": "browser_snapshot"},
+        {"tool": "commit_goal", "arguments": {"contract": {
+            "requested_action": "update a supplier contact",
+            "goal_type": "update_supplier_contact", "supplier": "Larkspur Supplies",
+            "selector": "message"}}},
+        {"tool": "open_page", "arguments": {"app": "portal", "page": "message",
+                                            "id": "msg-larkspur"}},
+        {"tool": "record_facts", "arguments": {
+            "labels": ["Contact name", "Contact email", "Remittance email"]}},
+        {"tool": "open_page", "arguments": {"app": "register", "page": "supplier_edit",
+                                            "id": "larkspur-supplies"}},
+        {"tool": "fill_form", "arguments": {"fields": [
+            {"label": label, "fact": f"msg-larkspur.{key}"} for key, label in [
+                ("contact_name", "Contact name"), ("contact_email", "Contact email"),
+                ("remittance_email", "Remittance email")]]}},
+        {"tool": "submit_form"},
+        {"tool": "submit_form"},
+        {"tool": "finish", "arguments": {"summary": "Done"}},
     ]
-    script += [{"tool": "record_fact", "arguments": {"key": key,
-        "observation_id": "OBS", "field_locator": label, "type": "text"}}
-        for key, label in [("contact_name", "Contact name"),
-                           ("contact_email", "Contact email"),
-                           ("remittance_email", "Remittance email")]]
-    script += [{"tool": "commit_goal", "arguments": {"contract": {
-        "goal_type": "update_supplier_contact", "supplier": "Larkspur Supplies",
-        "selector": "message", "source_doc_id": "msg-larkspur"}}},
-        {"tool": "browser_navigate", "arguments": {
-            "url": f"{register_url}/suppliers/larkspur-supplies/edit"}},
-        {"tool": "browser_snapshot"}]
-    for key, label in [("contact_name", "Contact name"),
-                       ("contact_email", "Contact email"),
-                       ("remittance_email", "Remittance email")]:
-        script += [{"tool": "browser_fill", "target": label, "arguments": {"fact_key": key}},
-                   {"tool": "browser_snapshot"}]
-    script += [{"tool": "browser_click", "target": "Save"},
-               {"tool": "browser_snapshot"},
-               {"tool": "browser_click", "target": "Save"},
-               {"tool": "finish", "arguments": {"summary": "Done"}}]
     worker = WorkerLoop(store=store, provider=FakeProvider(script), browser=browser,
                         probes=probes, workspace=WorkspaceFiles(tmp_path / "workspace"),
                         portal_url=portal_url, register_url=register_url)

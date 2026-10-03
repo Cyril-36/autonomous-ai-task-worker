@@ -139,7 +139,7 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
                 provider = Provider(base_url=settings.base_url, api_key=settings.api_key,
                                     model=settings.model, ledger=ledger)
             else:
-                provider = FakeProvider(fake_script(case, portal_url, register_url))
+                provider = FakeProvider(fake_script(case))
             store.create_run(run_id, case["request"], principal, provider.model)
             understanding = case["kind"] == "understanding"
             worker = WorkerLoop(store=store, provider=provider, browser=browser,

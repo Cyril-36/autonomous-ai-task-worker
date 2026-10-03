@@ -3,20 +3,10 @@
 from __future__ import annotations
 
 
-def _invoice_steps(case: dict, portal_url: str, register_url: str) -> list[dict]:
+def _invoice_steps(case: dict) -> list[dict]:
     supplier = case["supplier"]
     number = case["invoice_number"]
-    script = [
-        {"tool": "browser_navigate", "arguments": {
-            "url": f"{portal_url}/invoices/{number.lower()}"}},
-        {"tool": "browser_snapshot"},
-    ]
-    script += [{"tool": "record_fact", "arguments": {
-        "key": key, "observation_id": "OBS", "field_locator": label, "type": kind,
-    }} for key, label, kind in [
-        ("number", "Invoice number", "text"), ("amount", "Amount", "amount"),
-        ("due", "Due date", "date"), ("currency", "Currency", "text"),
-    ]]
+    doc = number.lower()
     if case["kind"] == "batch":
         proposal = {"goal_type": "register_batch", "supplier": supplier,
                     "selector": "all_unregistered", "max_count": 1}
@@ -25,38 +15,38 @@ def _invoice_steps(case: dict, portal_url: str, register_url: str) -> list[dict]
                     "selector": case.get("selector", "latest")}
         if proposal["selector"] == "invoice_number":
             proposal["invoice_number"] = number
-    script.append({"tool": "commit_goal", "arguments": {"contract": proposal}})
+    layout_b = case.get("fault") == "layout_b"
     form = [
-        {"tool": "browser_navigate", "arguments": {"url": f"{register_url}/invoices/new"}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_select", "target": "Supplier", "arguments": {"option": supplier}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_fill", "target": "Invoice number", "arguments": {"fact_key": "number"}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_fill", "target": "Total" if case.get("fault") == "layout_b" else "Amount",
-         "arguments": {"fact_key": "amount"}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_fill", "target": "Payment due" if case.get("fault") == "layout_b" else "Due date",
-         "arguments": {"fact_key": "due"}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_fill", "target": "Source document",
-         "arguments": {"free_text": number.lower()}},
-        {"tool": "browser_snapshot"},
-        {"tool": "browser_click", "target": "Record invoice" if case.get("fault") == "layout_b" else "Save"},
+        {"tool": "open_page", "arguments": {"app": "register", "page": "new_invoice"}},
+        {"tool": "fill_form", "arguments": {"fields": [
+            {"label": "Supplier", "fact": "goal.supplier"},
+            {"label": "Invoice number", "fact": f"{doc}.invoice_number"},
+            {"label": "Total" if layout_b else "Amount", "fact": f"{doc}.amount"},
+            {"label": "Payment due" if layout_b else "Due date", "fact": f"{doc}.due_date"},
+            {"label": "Currency", "fact": f"{doc}.currency"},
+            {"label": "Source document", "fact": f"{doc}.document_id"},
+        ]}},
+        {"tool": "submit_form"},
     ]
-    script += form
+    script = [
+        {"tool": "commit_goal", "arguments": {"contract": proposal}},
+        {"tool": "open_page", "arguments": {"app": "portal", "page": "invoice", "id": doc}},
+        {"tool": "record_facts", "arguments": {
+            "labels": ["Invoice number", "Amount", "Due date", "Currency"]}},
+        *form,
+    ]
     if case.get("fault") == "fail_next_save":
         script += form
     if case.get("decision"):
-        script += [{"tool": "browser_snapshot"}, {"tool": "browser_click", "target": "Save"}]
+        script += [{"tool": "submit_form"}]
     script += [{"tool": "finish", "arguments": {"summary": "Ready for verification"}}]
     return script
 
 
-def fake_script(case: dict, portal_url: str, register_url: str) -> list[dict]:
+def fake_script(case: dict) -> list[dict]:
     kind = case["kind"]
     if kind in {"invoice", "batch", "crash"}:
-        return _invoice_steps(case, portal_url, register_url)
+        return _invoice_steps(case)
     if kind == "existing":
         return [
             {"tool": "commit_goal", "arguments": {"contract": {
@@ -69,8 +59,7 @@ def fake_script(case: dict, portal_url: str, register_url: str) -> list[dict]:
             {"tool": "commit_goal", "arguments": {"contract": {
                 "goal_type": "export_invoices", "selector": "filter",
                 "due_before": str(case["due_before"])}}},
-            {"tool": "files_write", "arguments": {"name": case["expected_export"],
-                "probe_query": {"due_before": str(case["due_before"])}}},
+            {"tool": "files_write", "arguments": {"name": "due.csv"}},
             {"tool": "finish", "arguments": {"summary": "Ready for verification"}},
         ]
     if kind == "ambiguity":
@@ -90,15 +79,14 @@ def fake_script(case: dict, portal_url: str, register_url: str) -> list[dict]:
         return [{"error": "timeout"}]
     if kind == "stale_ref":
         return [
-            {"tool": "browser_navigate", "arguments": {"url": f"{portal_url}/invoices"}},
-            {"tool": "browser_snapshot"},
+            {"tool": "open_page", "arguments": {"app": "portal", "page": "invoices"}},
             {"tool": "browser_click", "target": "LS-1042"},
             {"tool": "browser_click", "arguments": {"ref": "e999"}},
             {"tool": "ask_user", "arguments": {"question": "The page changed; should I continue?"}},
         ]
     if kind == "offsite":
         return [
-            {"tool": "browser_navigate", "arguments": {"url": "https://example.org/offsite"}},
+            {"tool": "open_page", "arguments": {"app": "elsewhere", "page": "home"}},
             {"tool": "ask_user", "arguments": {"question": "The destination was outside the sandbox."}},
         ]
     raise ValueError(f"Unknown fake evaluation kind: {kind}")

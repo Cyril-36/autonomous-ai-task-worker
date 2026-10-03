@@ -74,9 +74,6 @@ class Probes:
     async def register_policy(self):
         return await self._register("GET", "/api/policy")
 
-    async def operation_status(self, token: str):
-        return await self._register("GET", f"/api/operations/{token}")
-
     async def void_operation(self, token: str):
         return await self._register("POST", f"/api/operations/{token}/void")
 

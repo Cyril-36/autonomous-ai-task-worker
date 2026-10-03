@@ -51,12 +51,6 @@ class Ledger:
         return sum((entry.settled_inr if entry.settled_inr is not None
                     else entry.reserved_inr for entry in self.entries(run_id)), Decimal(0))
 
-    def output_bound_enforced(self, model: str) -> bool:
-        with self._connect() as db:
-            row = db.execute("SELECT max_tokens_enforced FROM ledger_model_bounds WHERE model=?",
-                             (model,)).fetchone()
-        return row is None or bool(row[0])
-
     def estimate(self, model: str, request: dict) -> Decimal:
         if model not in self.pricing.models:
             raise ValueError(f"No price configured for model {model}")

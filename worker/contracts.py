@@ -193,20 +193,6 @@ class GoalContract(Frozen):
 # --- tools ------------------------------------------------------------------
 
 
-class ToolCall(Frozen):
-    call_id: str
-    name: str
-    arguments: dict[str, Any]
-
-
-class ToolResult(Frozen):
-    call_id: str
-    ok: bool
-    content: str  # what the model sees
-    observation_id: str | None = None
-    error_code: str | None = None
-
-
 class PlanStep(Frozen):
     text: str
     status: Literal["todo", "doing", "done", "blocked"] = "todo"

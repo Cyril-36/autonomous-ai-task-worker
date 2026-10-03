@@ -22,17 +22,6 @@ SPECS: dict[str, dict[str, str]] = {
     "ask_user": {"question": "string"},
     "unsupported": {"reason": "string"},
     "finish": {"summary": "string"},
-    # Low-level tools kept for scripted tests and recovery; not offered to the model
-    "browser_navigate": {"url": "string"},
-    "browser_fill": {"ref": "string", "fact_key": "string?", "user_literal": "string?",
-                     "free_text": "string?"},
-    "browser_fill_fact": {"ref": "string", "fact_key": "string"},
-    "browser_fill_text": {"ref": "string", "free_text": "string"},
-    "browser_fill_literal": {"ref": "string", "user_literal": "string"},
-    "browser_select": {"ref": "string", "option": "string"},
-    "record_fact": {"key": "string", "observation_id": "string",
-                    "field_locator": "string", "type": "string"},
-    "reauthenticate": {"app": "string"},
 }
 
 DESCRIPTIONS = {
@@ -99,8 +88,6 @@ GOAL_SCHEMA = {
 
 def _schema(spec: dict[str, str]) -> dict:
     properties = {key: {"type": kind.removesuffix("?")} for key, kind in spec.items()}
-    if "field_locator" in spec:
-        properties["type"]["enum"] = ["text", "amount", "date"]
     if "contract" in spec:
         properties["contract"] = GOAL_SCHEMA
     if "labels" in spec:
@@ -154,7 +141,4 @@ def validate_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         expected = {"string": str, "object": dict, "array": list}[kind]
         if not isinstance(value, expected):
             raise TypeError(f"Invalid {key}")
-    if name == "browser_fill" and sum(key in arguments for key in
-                                      ("fact_key", "user_literal", "free_text")) != 1:
-        raise ValueError("Choose exactly one fill source")
     return arguments

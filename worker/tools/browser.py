@@ -80,7 +80,6 @@ class BrowserSession:
         self.step = 0
         self.current: Observation | None = None
         self._locators: dict[str, int] = {}
-        self.offsite_navigation: str | None = None
         self.last_navigation_status: int | None = None
         page.on("framenavigated", self._on_navigation)
         page.on("response", self._on_response)
@@ -152,7 +151,6 @@ class BrowserSession:
         if frame.url in {"about:blank", ""} or urlsplit(frame.url).scheme not in {"http", "https"}:
             return
         if not self.guard.navigation_allowed(frame.url):
-            self.offsite_navigation = frame.url
             self.guard.blocked.append({"method": "NAVIGATION", "url": frame.url})
             asyncio.create_task(self.page.close())
 

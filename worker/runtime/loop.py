@@ -39,9 +39,7 @@ from worker.tools.registry import tools_for_phase, validate_call
 from worker.verify.goals import GoalRejection, commit_goal, revise_goal
 from worker.verify.verifier import verify
 
-PAGE_CHANGING = {"browser_navigate", "browser_click", "browser_fill",
-                 "browser_fill_fact", "browser_fill_text", "browser_fill_literal",
-                 "browser_select", "open_page", "fill_form", "submit_form"}
+PAGE_CHANGING = {"browser_click", "open_page", "fill_form", "submit_form"}
 FILLABLE = {"textbox", "date", "textarea", "combobox"}
 
 
@@ -324,50 +322,12 @@ class WorkerLoop:
             if len(submits) != 1:
                 return {"ok": False, "summary": "This page has no single form to submit."}
             return await self._submit(state, submits[0].ref)
-        if name in {"browser_fill_fact", "browser_fill_text", "browser_fill_literal"}:
-            name = "browser_fill"
-        if name == "browser_navigate":
-            if self.browser.page.url == args["url"]:
-                return {"ok": False,
-                        "summary": "Already on this page; use its current observation.",
-                        "progress": False}
-            await self.browser.navigate(args["url"])
-            observation = await self._observe(state)
-            return {"ok": True, "summary": f"Navigated and observed {observation.title}",
-                    "progress": True}
         if name == "browser_snapshot":
             previous = list(state.observations.values())[-1] if state.observations else None
             observation = await self._observe(state)
             changed = previous is None or (previous.url, previous.content_hash) != (
                 observation.url, observation.content_hash)
             return {"ok": True, "summary": "Observed page", "progress": changed}
-        if name == "browser_fill":
-            element = self._current_element(args["ref"])
-            if "fact_key" in args:
-                fact = state.facts[args["fact_key"]]
-                value = fact.normalized
-                source = FillSource(kind="fact", fact_key=fact.key)
-            elif "user_literal" in args:
-                value = args["user_literal"]
-                source = FillSource(kind="user_literal")
-            else:
-                value = args["free_text"]
-                source = FillSource(kind="free_text")
-            if element.value == value:
-                return {"ok": False,
-                        "summary": f"{element.name} already has that value; move to the next field.",
-                        "progress": False}
-            await self.browser.fill(args["ref"], value)
-            state.fills[element.name] = value
-            state.fill_sources[element.name] = source
-            await self._observe(state)
-            return {"ok": True, "summary": f"Filled {element.name}", "progress": True}
-        if name == "browser_select":
-            element = self._current_element(args["ref"])
-            await self.browser.select(args["ref"], args["option"])
-            state.fills[element.name] = args["option"]
-            await self._observe(state)
-            return {"ok": True, "summary": f"Selected {element.name}", "progress": True}
         if name == "browser_click":
             element = self._current_element(args["ref"])
             if element.submits_form:
@@ -375,16 +335,6 @@ class WorkerLoop:
             await self.browser.click(args["ref"])
             await self._observe(state)
             return {"ok": True, "summary": f"Clicked {element.name}", "progress": True}
-        if name == "reauthenticate":
-            await self.browser.reauthenticate(args["app"],
-                                              principal=self.store.get_run(state.run_id).principal)
-            return {"ok": True, "summary": "Session refreshed", "progress": True}
-        if name == "record_fact":
-            fact = record_fact(state, args["key"], args["observation_id"],
-                               args["field_locator"], FactType(args["type"]))
-            self._emit(state.run_id, "fact", {**fact.model_dump(mode="json"),
-                                               "step": state.steps})
-            return {"ok": True, "summary": f"Recorded {fact.key}", "progress": True}
         if name == "commit_goal":
             if state.phase != "discover":
                 raise ValueError("Goal can only be committed during discovery")
@@ -561,13 +511,11 @@ class WorkerLoop:
                 if fact is None:
                     known = ", ".join(sorted(state.facts)) or "none yet"
                     return {"ok": False, "summary": f"Unknown fact {item['fact']}. Facts: {known}"}
-                plan.append((item["label"], element, fact.normalized,
-                             FillSource(kind="fact", fact_key=fact.key)))
+                plan.append((item["label"], element, fact.normalized))
             else:
-                plan.append((item["label"], element, str(item["text"]),
-                             FillSource(kind="free_text")))
+                plan.append((item["label"], element, str(item["text"])))
         filled, unchanged = [], []
-        for label, element, value, source in plan:
+        for label, element, value in plan:
             current = self.browser.current or await self.browser.snapshot()
             element = find_by_label(current, label)
             if element.role == "combobox":
@@ -580,8 +528,6 @@ class WorkerLoop:
                 continue
             else:
                 await self.browser.fill(element.ref, value)
-            state.fills[element.name] = value
-            state.fill_sources[element.name] = source
             filled.append(label)
         await self._observe(state)
         if not filled:

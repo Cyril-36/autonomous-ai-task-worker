@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from worker.contracts import Approval, Fact, FillSource, GoalContract, Observation, PendingMutation
+from worker.contracts import Approval, Fact, GoalContract, Observation, PendingMutation
 
 
 @dataclass
@@ -23,8 +23,6 @@ class RuntimeState:
     policy: dict = field(default_factory=dict)
     approvals: list[Approval] = field(default_factory=list)
     pending: list[PendingMutation] = field(default_factory=list)
-    fills: dict[str, str] = field(default_factory=dict)
-    fill_sources: dict[str, object] = field(default_factory=dict)
     plan: list[dict] = field(default_factory=list)
     observations_text: list[str] = field(default_factory=list)
     feedback: list[str] = field(default_factory=list)
@@ -46,9 +44,6 @@ def save_state(path: Path | str, state: RuntimeState) -> None:
         "source_values": state.source_values, "policy": state.policy,
         "approvals": [value.model_dump(mode="json") for value in state.approvals],
         "pending": [value.model_dump(mode="json") for value in state.pending],
-        "fills": state.fills,
-        "fill_sources": {key: value.model_dump(mode="json")
-                         for key, value in state.fill_sources.items()},
         "plan": state.plan, "observations_text": state.observations_text,
         "feedback": state.feedback, "steps": state.steps,
         "wrote_business_data": state.wrote_business_data,
@@ -83,9 +78,6 @@ def load_state(path: Path | str, run_id: str) -> RuntimeState | None:
     state.policy = raw["policy"]
     state.approvals = [Approval.model_validate(value) for value in raw["approvals"]]
     state.pending = [PendingMutation.model_validate(value) for value in raw["pending"]]
-    state.fills = raw["fills"]
-    state.fill_sources = {key: FillSource.model_validate(value)
-                          for key, value in raw["fill_sources"].items()}
     state.plan = raw["plan"]
     state.observations_text = raw["observations_text"]
     state.feedback = raw["feedback"]
