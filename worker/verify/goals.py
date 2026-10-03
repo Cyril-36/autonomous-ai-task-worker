@@ -88,8 +88,8 @@ DATE_PATTERN = re.compile(
 # confirm "unclear", so a request for something else (a refund, a payment, a deletion) cannot
 # become a write. It is a lexical check with known limits, which is why its doubt goes to a person.
 _TOKEN = re.compile(r"[A-Za-z]{2}-\d+|[A-Za-z]+(?:'[a-z]+)?|\d+|[.;:!?]")
-_NEGATION = {"not", "don't", "dont", "never", "without", "avoid", "stop", "no", "haven't",
-             "hasn't", "didn't", "isn't", "aren't", "shouldn't", "won't"}
+_NEGATION = {"not", "don't", "dont", "doesn't", "never", "without", "avoid", "stop", "no",
+             "haven't", "hasn't", "didn't", "isn't", "aren't", "shouldn't", "won't"}
 _FILLER = {"a", "an", "the", "their", "its", "our", "your", "this", "that", "these", "those",
            "any", "all", "every", "each", "up", "to", "of", "latest", "newest", "most",
            "recent", "last", "new", "unregistered", "missing", "outstanding", "next", "first",
@@ -99,6 +99,7 @@ _DETERMINERS = {"a", "an", "the", "their", "its", "our", "your", "this", "that",
 _INVOICE_OBJECT = re.compile(r"^(?:invoices?|bills?|it|them|[a-z]{2}-\d+)$")
 _RECORD_VERB = re.compile(r"^(?:register|enter|record|log|add|put|file|book|input|capture|"
                           r"insert)(?:s|ed|ing)?$")
+_PASSIVE_REGISTER = re.compile(r"\b(?:need|needs|has|have) to go$|\b(?:must|should) go$")
 _GOAL_RULES: dict[GoalType, dict] = {
     GoalType.register_invoice: {"verb": _RECORD_VERB, "object": _INVOICE_OBJECT},
     GoalType.register_batch: {"verb": _RECORD_VERB, "object": _INVOICE_OBJECT},
@@ -121,23 +122,39 @@ CONFIRM_ACTION: dict[GoalType, str] = {
 }
 
 
-def _sentences(request: str) -> list[list[str]]:
+def _sentences(request: str) -> list[tuple[list[str], bool]]:
     sentences, current = [], []
     for token in _TOKEN.findall(request):
         if token in ".;:!?":
             if current:
-                sentences.append(current)
+                sentences.append((current, token == "?"))
             current = []
         else:
             current.append(token)
-    return sentences + ([current] if current else [])
+    return sentences + ([(current, False)] if current else [])
+
+
+def _action_negated(words: list[str], index: int) -> bool:
+    for position in range(max(0, index - 3), index):
+        word = words[position]
+        if word not in _NEGATION:
+            continue
+        # "If not, put it in" describes when to act; it does not forbid the action.
+        if word == "not" and position > 0 and words[position - 1] == "if":
+            continue
+        if word in {"isn't", "hasn't", "aren't"} and "if" in words[max(0, position - 2):position]:
+            continue
+        return True
+    return False
 
 
 def action_evidence(goal_type: GoalType, request: str) -> str:
     rule = _GOAL_RULES[goal_type]
-    unclear = False
-    for sentence in _sentences(request):
+    unclear = denied = False
+    for sentence, question in _sentences(request):
         lower = [token.casefold() for token in sentence]
+        direct_request = lower[:2] in (["can", "you"], ["could", "you"],
+                                       ["would", "you"], ["will", "you"])
         for index, word in enumerate(lower):
             if rule.get("unclear") and rule["unclear"].match(word):
                 unclear = True
@@ -145,7 +162,14 @@ def action_evidence(goal_type: GoalType, request: str) -> str:
                 continue
             if index and lower[index - 1] in _DETERMINERS and not rule.get("self_object"):
                 continue  # "the register", "on file": a noun, not an action
-            if _NEGATION & set(lower[max(0, index - 3):index]):
+            if _action_negated(lower, index):
+                denied = True
+                continue
+            if lower[max(0, index - 2):index] == ["before", "you"]:
+                unclear = True
+                continue
+            if question and not direct_request:
+                unclear = True
                 continue
             if rule.get("self_object"):
                 return "clear"
@@ -165,10 +189,16 @@ def action_evidence(goal_type: GoalType, request: str) -> str:
             text = " ".join(lower)
             for match in re.finditer(r"\b(?:in|into|to) (?:our |the )?(?:register|books)\b", text):
                 before = text[:match.start()].split()
-                if (any(rule["object"].match(item) for item in before)
-                        and not _NEGATION & set(before[-4:])):
-                    return "clear"
-    return "unclear" if unclear else "none"
+                if not any(rule["object"].match(item) for item in before):
+                    continue
+                if not question and _PASSIVE_REGISTER.search(" ".join(before)):
+                    if _NEGATION & set(before[-5:]):
+                        denied = True
+                    else:
+                        return "clear"
+                    continue
+                unclear = True
+    return "none" if denied else ("unclear" if unclear else "none")
 
 
 def action_matches(goal_type: GoalType, request: str) -> bool:

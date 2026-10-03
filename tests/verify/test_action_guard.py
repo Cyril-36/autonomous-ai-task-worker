@@ -46,7 +46,52 @@ def test_an_action_on_some_other_object_is_unclear_and_must_be_confirmed(request
 def test_a_check_only_request_must_be_confirmed_before_a_goal_that_writes():
     goal = GoalType.check_or_register_invoice
     assert action_evidence(goal, "Do we already have BF-2291 on file from Brightfen Paper?") == "unclear"
+    assert action_evidence(goal, "Is LS-1042 from Larkspur Supplies in the register yet?") == "unclear"
     assert action_evidence(goal, "Is KC-702 in the register yet? If not, put it in.") == "clear"
+
+
+@pytest.mark.parametrize("goal", [GoalType.register_invoice, GoalType.check_or_register_invoice])
+def test_register_status_question_is_not_write_permission(goal):
+    assert action_evidence(goal, "Is LS-1042 from Larkspur Supplies in the register yet?") == "unclear"
+    assert action_evidence(goal, "Does LS-1042 need to go into the register?") == "unclear"
+    assert action_evidence(goal, "Should I register invoice LS-1042?") == "unclear"
+    assert action_evidence(goal, "The newest invoice needs to go into the register.") == "clear"
+
+
+@pytest.mark.parametrize("goal", [GoalType.register_invoice, GoalType.check_or_register_invoice])
+def test_explicit_no_write_still_wins_over_a_register_status_question(goal):
+    request = ("Do not register LS-1042 from Larkspur Supplies. "
+               "Just check whether LS-1042 is in the register.")
+    assert action_evidence(goal, request) == "none"
+
+
+@pytest.mark.parametrize("request_text", [
+    "The latest invoice does not need to go into the register.",
+    "The latest invoice doesn't need to go into the register.",
+    "No invoice needs to go into the register.",
+])
+def test_negated_passive_request_never_authorizes_a_write(request_text):
+    assert action_evidence(GoalType.register_invoice, request_text) == "none"
+
+
+def test_instruction_to_ask_first_does_not_authorize_the_write():
+    assert action_evidence(GoalType.register_invoice,
+                           "Before you register invoice LS-1042, ask me first.") == "unclear"
+
+
+@pytest.mark.asyncio
+async def test_commit_goal_requires_confirmation_for_check_only_and_refuses_explicit_no_write():
+    from tests.verify.util import FakeProbes
+    from worker.verify.goals import commit_goal
+    goal = {"goal_type": "register_invoice", "supplier": "Larkspur Supplies",
+            "selector": "invoice_number", "invoice_number": "LS-1042"}
+    check_only = await commit_goal(goal, "Is LS-1042 from Larkspur Supplies in the register yet?",
+                                   FakeProbes(), run_id="r")
+    assert check_only.code == "needs_confirmation"
+    no_write = await commit_goal(
+        goal, "Do not register LS-1042 from Larkspur Supplies. "
+              "Just check whether LS-1042 is in the register.", FakeProbes(), run_id="r")
+    assert no_write.code == "request_mismatch"
 
 
 def test_confirming_answers_are_clear_evidence_for_their_goal():
