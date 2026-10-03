@@ -25,6 +25,8 @@ def test_record_fact_copies_observed_value_with_source_identity():
     assert fact.normalized == "48250.00"
     assert (fact.doc_id, fact.revision) == ("d1", "1")
     assert state.facts["amount"] == fact
+    with pytest.raises(ValueError, match="already recorded"):
+        record_fact(state, "amount", "o1", "Amount", FactType.amount)
     with pytest.raises(ValueError):
         record_fact(state, "bad", "o1", "Due date", FactType.date)
 

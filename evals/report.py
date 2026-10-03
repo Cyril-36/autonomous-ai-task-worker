@@ -8,7 +8,8 @@ from worker.runtime.prompts import PROMPT_HASH
 
 
 def render_report(results: list[dict], *, model: str, tier: str,
-                  reference_date: str | None = None, seed: int | None = None) -> str:
+                  reference_date: str | None = None, seed: int | None = None,
+                  excluded: list[str] | None = None) -> str:
     total = len(results)
     tasks = [row for row in results if row.get("kind", "task") == "task"]
     controls = [row for row in results if row.get("kind") == "control"]
@@ -41,4 +42,12 @@ def render_report(results: list[dict], *, model: str, tier: str,
         f"{row['tool_calls']} | ₹{row['cost_inr']} |"
         for row in results
     ]
+    failed = [row for row in results if not row["success"] and row.get("diagnostics")]
+    if failed:
+        lines += ["", "## Failed run diagnostics", ""]
+        for row in failed:
+            lines += [f"### {row['id']}", "", *[f"- {item}" for item in row["diagnostics"]], ""]
+    if excluded:
+        lines += ["", "## Script-only scenarios excluded from live tier", "",
+                  ", ".join(f"`{name}`" for name in excluded), ""]
     return "\n".join(lines) + "\n"

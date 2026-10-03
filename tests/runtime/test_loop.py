@@ -2,22 +2,136 @@ import asyncio
 import csv
 import socket
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 import uvicorn
+from playwright.async_api import Error as PlaywrightError
 
 from sandbox.portal.app import create_app as portal_app
 from sandbox.register.app import create_app as register_app
 from sandbox.register.db import connect
 from tests.verify.util import FakeProbes
-from worker.contracts import Approval, Principal
+from worker.console.service import RunService
+from worker.contracts import Approval, Element, Fact, FactType, Observation, Principal
 from worker.llm.fake import FakeProvider
+from worker.llm.provider import ProviderResponse
 from worker.policy.approvals import decide_approval
 from worker.runtime.loop import WorkerLoop
+from worker.runtime.state import RuntimeState, load_state
 from worker.store import Store
 from worker.tools.browser import BrowserSession
 from worker.tools.files import WorkspaceFiles
 from worker.verify.probes import CsvRows, Probes
+
+
+@pytest.mark.asyncio
+async def test_repeating_an_unchanged_fill_is_not_progress(tmp_path):
+    observation = Observation(observation_id="o1", run_id="r1", step=1,
+                              url="http://register/invoices/new", title="New invoice",
+                              text="", elements=[Element(ref="e3", role="textbox",
+                                                         name="Invoice number", value="LS-1042")],
+                              content_hash="hash")
+
+    async def no_fill(ref, value):
+        raise AssertionError("An unchanged field must not be filled again")
+
+    browser = SimpleNamespace(current=observation, fill=no_fill)
+    state = RuntimeState("r1", ["Register LS-1042"], set())
+    state.facts["invoice_number"] = Fact(
+        key="invoice_number", value="LS-1042", normalized="LS-1042",
+        type=FactType.text, observation_id="o1", url=observation.url,
+        doc_id="ls-1042", revision="1", field_locator="Invoice number")
+    state.fills["Invoice number"] = "LS-1042"
+    worker = WorkerLoop(store=None, provider=None, browser=browser, probes=None,
+                        workspace=None, portal_url="", register_url="")
+    result = await worker._dispatch(state, "browser_fill",
+                                    {"ref": "e3", "fact_key": "invoice_number"})
+    assert not result["ok"]
+    assert not result["progress"]
+
+
+@pytest.mark.asyncio
+async def test_browser_driver_error_is_a_tool_failure_not_a_crashed_run(tmp_path):
+    class PolicyProbes(FakeProbes):
+        async def register_policy(self):
+            return {"version": 1, "threshold": "100000.00"}
+
+    async def broken_navigate(url):
+        raise PlaywrightError("target closed")
+
+    store = Store(tmp_path / "worker.db")
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    store.create_run("r1", "Register latest invoice", principal, "fake")
+    browser = SimpleNamespace(page=SimpleNamespace(url="about:blank"),
+                              navigate=broken_navigate)
+    worker = WorkerLoop(store=store, provider=FakeProvider([
+        {"tool": "browser_navigate", "arguments": {"url": "http://portal/invoices"}},
+        {"tool": "ask_user", "arguments": {"question": "The page is unavailable. Retry?"}},
+    ]), browser=browser, probes=PolicyProbes(), workspace=None,
+        portal_url="http://portal", register_url="http://register")
+    await worker.run("r1")
+    assert store.get_run("r1").status == "awaiting_input"
+    assert any(event.type == "step" and not event.data["ok"]
+               for event in store.events("r1"))
+
+
+@pytest.mark.asyncio
+async def test_navigation_adds_observation_before_next_model_call(tmp_path):
+    class MultiProvider(FakeProvider):
+        first = True
+
+        async def complete(self, *, messages, tools, max_tokens, run_id):
+            if self.first:
+                self.first = False
+                return ProviderResponse(None, [
+                    {"name": "browser_navigate", "arguments": {
+                        "url": f"{portal_url}/invoices/ls-1042"}},
+                    {"name": "record_fact", "arguments": {"key": "wrong",
+                        "observation_id": "stale", "field_locator": "Invoice number",
+                        "type": "text"}},
+                ], "fake", None)
+            return await super().complete(messages=messages, tools=tools,
+                                          max_tokens=max_tokens, run_id=run_id)
+
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    store = Store(tmp_path / "worker.db")
+    store.create_run("r1", "Register latest invoice from Larkspur Supplies", principal, "fake")
+    browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                         register_url=register_url)
+    cookies = await browser.context.cookies(register_url)
+    session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+    probes = Probes(portal_url=portal_url, register_url=register_url,
+                    probe_key="probe-demo", register_session=session,
+                    workspace=tmp_path / "workspace")
+    try:
+        worker = WorkerLoop(store=store, provider=MultiProvider([
+            {"tool": "record_fact", "arguments": {"key": "number",
+                "observation_id": "OBS", "field_locator": "Invoice number", "type": "text"}},
+        ]), browser=browser, probes=probes, workspace=None,
+            portal_url=portal_url, register_url=register_url)
+        await worker.run("r1", max_steps=2)
+        assert any(event.type == "fact" for event in store.events("r1"))
+        assert not any(event.type == "step" and event.data["tool"] == "record_fact"
+                       and event.data["args"].get("key") == "wrong"
+                       for event in store.events("r1"))
+        state = load_state(store.path, "r1")
+        repeated = await worker._dispatch(state, "browser_navigate",
+                                          {"url": f"{portal_url}/invoices/ls-1042"})
+        assert not repeated["ok"]
+    finally:
+        await probes.close()
+        await browser.close()
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task
 
 
 @pytest.mark.asyncio
@@ -48,6 +162,22 @@ async def test_unsupported_goal_ends_explicitly(tmp_path):
         portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
     await worker.run("r1")
     assert store.get_run("r1").status == "unsupported"
+
+
+@pytest.mark.asyncio
+async def test_model_can_mark_payment_request_unsupported(tmp_path):
+    store = Store(tmp_path / "worker.db")
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    store.create_run("r1", "Pay all suppliers today", principal, "fake")
+    worker = WorkerLoop(store=store, provider=FakeProvider([
+        {"tool": "unsupported", "arguments": {"reason": "Payments are not supported."}},
+    ]), browser=None, probes=None, workspace=None,
+        portal_url="http://portal", register_url="http://register")
+    await worker.run("r1")
+    assert store.get_run("r1").status == "unsupported"
+    statuses = [event for event in store.events("r1") if event.type == "run_status"]
+    assert "Payments" in statuses[-1].data["reason"]
 
 
 @pytest.mark.asyncio
@@ -121,6 +251,7 @@ async def test_export_uses_probe_rows_and_verifies_exact_csv(tmp_path):
     worker = WorkerLoop(store=store, provider=FakeProvider([
         {"tool": "commit_goal", "arguments": {"contract": {
             "goal_type": "export_invoices", "selector": "filter", "due_before": "2026-12-01"}}},
+        {"tool": "files_list", "arguments": {"path": "exports"}},
         {"tool": "files_write", "arguments": {"name": "due.csv",
             "probe_query": {"due_before": "2026-12-01"}}},
         {"tool": "finish", "arguments": {"summary": "Done"}},
@@ -129,6 +260,8 @@ async def test_export_uses_probe_rows_and_verifies_exact_csv(tmp_path):
     await worker.run("r1")
     assert store.get_run("r1").status == "completed"
     assert (tmp_path / "workspace" / "exports" / "due.csv").is_file()
+    assert any(event.type == "step" and event.data["tool"] == "files_list"
+               and not event.data["ok"] for event in store.events("r1"))
 
 
 async def _serve(app):
@@ -254,6 +387,18 @@ async def test_fake_model_drives_real_browser_and_verifies_invoice(tmp_path, fau
             1 if expected_status in {"completed", "failed"} else 0)
         assert any(event.type == "verification" and event.data["passed"]
                    for event in store.events("r1")) == (expected_status == "completed")
+        for event in store.events("r1"):
+            if event.type == "contract":
+                assert event.data["action"] in {"committed", "revised", "rejected"}
+            elif event.type in {"fact", "gate"}:
+                assert isinstance(event.data["step"], int)
+            elif event.type == "pending":
+                assert {"mutation_id", "run_id", "form_token", "target_key",
+                        "intended_values", "state"} <= set(event.data)
+                assert event.data["form_token"] == "•••"
+            elif event.type == "error":
+                assert isinstance(event.data["retryable"], bool)
+        assert all("step" not in fact for fact in RunService(store).detail("r1", principal)["facts"])
         screenshots = [event.data["screenshot"] for event in store.events("r1")
                        if event.type == "step" and event.data.get("screenshot")]
         assert screenshots

@@ -93,7 +93,7 @@ def fake_script(case: dict, portal_url: str, register_url: str) -> list[dict]:
             {"tool": "browser_navigate", "arguments": {"url": f"{portal_url}/invoices"}},
             {"tool": "browser_snapshot"},
             {"tool": "browser_click", "target": "LS-1042"},
-            {"tool": "browser_click", "target": "LS-1042"},
+            {"tool": "browser_click", "arguments": {"ref": "e999"}},
             {"tool": "ask_user", "arguments": {"question": "The page changed; should I continue?"}},
         ]
     if kind == "offsite":

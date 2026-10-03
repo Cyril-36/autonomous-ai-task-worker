@@ -158,7 +158,8 @@ class RunService:
             "summary": run, "contract": contracts[-1] if contracts else None,
             "plan": {"steps": plans[-1]["steps"], "revision": plans[-1]["revision"]}
             if plans else {"steps": [], "revision": 0},
-            "facts": [event.data for event in events if event.type == "fact"],
+            "facts": [{key: value for key, value in event.data.items() if key != "step"}
+                      for event in events if event.type == "fact"],
             "approvals": self.store.approvals(run_id), "question": self.store.question(run_id),
             "verification": verifications[-1] if verifications else None,
             "pending": [item.model_copy(update={"form_token": "•••"})

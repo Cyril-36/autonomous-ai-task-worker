@@ -152,7 +152,7 @@ async def run_control(case: dict, *, browser, probes, portal_url: str,
     after = _new_invoice_count(register_db)
     passed = passed and after == before
     return {
-        "id": case["id"], "kind": "control", "success": passed,
+        "id": case["id"], "run_id": browser.run_id, "kind": "control", "success": passed,
         "actual_status": "pass" if passed else "fail",
         "expected_status": "pass", "field_correct": None,
         "saved_record_present": False,

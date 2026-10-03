@@ -3,7 +3,14 @@ from datetime import date
 import pytest
 import yaml
 
-from evals.run import SCENARIOS, run_case
+from evals.run import SCENARIOS, resolve_live_model, run_case
+
+
+def test_live_model_override_is_limited_to_priced_models():
+    assert resolve_live_model("google/gemini-2.5-flash") == "google/gemini-2.5-flash"
+    assert resolve_live_model(None) == "google/gemini-2.5-flash-lite"
+    with pytest.raises(ValueError):
+        resolve_live_model("unknown")
 
 
 def test_required_control_scenarios_are_declared():
@@ -41,3 +48,21 @@ async def test_crash_scenario_reconciles_one_record():
     assert result["success"], result
     assert result["actual_status"] == "completed"
     assert result["duplicates"] == 0
+
+
+@pytest.mark.asyncio
+async def test_each_eval_attempt_has_a_fresh_budget_identity():
+    scenarios = yaml.safe_load(SCENARIOS.read_text())["scenarios"]
+    case = next(item for item in scenarios if item["id"] == "expired_approval")
+    first = await run_case(case, reference_date=date(2026, 10, 3))
+    second = await run_case(case, reference_date=date(2026, 10, 3))
+    assert first["run_id"] != second["run_id"]
+
+
+@pytest.mark.asyncio
+async def test_stale_ref_case_asks_instead_of_writing():
+    scenarios = yaml.safe_load(SCENARIOS.read_text())["scenarios"]
+    case = next(item for item in scenarios if item["id"] == "stale_ref")
+    result = await run_case(case, reference_date=date(2026, 10, 3))
+    assert result["success"], result
+    assert result["unauthorized_writes"] == 0

@@ -8,6 +8,8 @@ from worker.policy.normalize import normalize
 
 def record_fact(state, key: str, observation_id: str, field_locator: str,
                 kind: FactType) -> Fact:
+    if key in state.facts:
+        raise ValueError(f"Fact key {key} was already recorded; use a distinct field key")
     observation = state.observations.get(observation_id)
     if observation is None:
         raise ValueError("Unknown observation")

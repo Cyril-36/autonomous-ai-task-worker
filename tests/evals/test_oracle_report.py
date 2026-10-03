@@ -1,8 +1,11 @@
 from datetime import date
 from decimal import Decimal
 
+import yaml
+
 from evals.oracle import inspect_case
 from evals.report import render_report
+from evals.run import SCENARIOS, select_cases
 from sandbox.portal.app import init_db as init_portal
 from sandbox.register.db import init_db as init_register
 from worker.contracts import Principal
@@ -65,3 +68,16 @@ def test_run_summary_keeps_gateway_cost_precision(tmp_path):
     store.create_run("r1", "Register latest", principal, "fake")
     store.update_run("r1", cost_inr=Decimal("0.000824332"))
     assert store.get_run("r1").cost_inr == Decimal("0.000824332")
+
+
+def test_live_suite_excludes_script_only_faults():
+    fixture = yaml.safe_load(SCENARIOS.read_text())
+    live, excluded = select_cases(fixture["scenarios"], live=True, limit=None)
+    ids = {case["id"] for case in live}
+    assert "intake_first_time" in ids
+    assert "crash_after_dispatch" not in ids
+    assert "provider_failure" not in ids
+    assert "crash_after_dispatch" in excluded
+    selected, _ = select_cases(fixture["scenarios"], live=True, limit=None,
+                               case_ids=["unsupported_payment"])
+    assert [item["id"] for item in selected] == ["unsupported_payment"]

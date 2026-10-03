@@ -14,5 +14,7 @@ dev:
 	uv run python -m scripts.dev
 eval:
 	uv run python -m evals.run
+	uv run python -m scripts.update_readme_metrics
 eval-live:
 	uv run python -m evals.run --live
+	uv run python -m scripts.update_readme_metrics

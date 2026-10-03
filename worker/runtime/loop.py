@@ -32,11 +32,31 @@ from worker.runtime.recovery import reconcile_all
 from worker.runtime.stall import StallDetector
 from worker.runtime.state import RuntimeState, load_state, save_state
 from worker.tools.files import WorkspaceFiles
-from worker.tools.registry import TOOLS, validate_call
+from worker.tools.registry import tools_for_phase, validate_call
 from worker.verify.goals import GoalRejection, commit_goal, revise_goal
 from worker.verify.verifier import verify
 
-PAGE_CHANGING = {"browser_navigate", "browser_click", "browser_fill", "browser_select"}
+PAGE_CHANGING = {"browser_navigate", "browser_click", "browser_fill",
+                 "browser_fill_fact", "browser_fill_text", "browser_fill_literal",
+                 "browser_select"}
+
+
+def ready_to_finish(state: RuntimeState) -> bool:
+    """Prompt verification once all frozen write targets have settled."""
+    if state.contract is None or state.verify_rounds or state.phase != "execute":
+        return False
+    if state.export_path:
+        return True
+    if not state.contract.sources:
+        return False
+    committed = [item.target_key for item in state.pending if item.state == "committed"]
+    for source in state.contract.sources:
+        target = {"supplier_id": source.supplier_id}
+        if source.kind == "invoice":
+            target["invoice_number"] = source.key
+        if target not in committed:
+            return False
+    return True
 
 
 class WorkerLoop:
@@ -109,6 +129,9 @@ class WorkerLoop:
                 self._terminal(state, RunStatus.blocked,
                                "The requested change was rejected. Nothing was saved.")
                 return
+            if any(item.status == ApprovalStatus.approved for item in state.approvals):
+                state.feedback.append("Approval applies to the current form only. Click its "
+                                      "existing Save control; do not navigate or change fields.")
             self.store.update_run(run_id, status="running")
             self._emit(run_id, "run_status", {"status": "running",
                                                "reason": "Continuing the saved run."})
@@ -128,7 +151,24 @@ class WorkerLoop:
                                       policy=state.policy, portal_url=self.portal_url,
                                       register_url=self.register_url)
             try:
-                response = await self.provider.complete(messages=messages, tools=TOOLS,
+                ready_to_verify = ready_to_finish(state)
+                approved_form_pending = bool(
+                    state.phase == "execute" and not state.wrote_business_data and
+                    any(item.status == ApprovalStatus.approved for item in state.approvals)
+                )
+                response = await self.provider.complete(messages=messages,
+                                                        tools=tools_for_phase(
+                                                            state.phase,
+                                                            allow_revision=state.verify_rounds > 0,
+                                                            ready_to_verify=ready_to_verify,
+                                                            approved_form_pending=
+                                                            approved_form_pending,
+                                                            contract=state.contract,
+                                                            facts=list(state.facts.values()),
+                                                            portal_url=self.portal_url,
+                                                            register_url=self.register_url,
+                                                            observation=self.browser.current
+                                                            if self.browser else None),
                                                         max_tokens=512, run_id=run_id)
             except BudgetExceeded:
                 self._terminal(state, RunStatus.blocked, "The estimated local spending limit was reached.")
@@ -166,17 +206,21 @@ class WorkerLoop:
                 args = call["arguments"]
                 if call.get("invalid_arguments"):
                     result = {"ok": False, "summary": "Tool arguments were not valid JSON"}
-                elif changed_page and name.startswith("browser_"):
-                    result = {"ok": False, "summary": "Re-observe the changed page first"}
                 else:
                     try:
                         validate_call(name, args)
                         result = await self._dispatch(state, name, args)
-                    except (ValueError, TypeError, KeyError) as exc:
+                    except (ValueError, TypeError, KeyError, FileNotFoundError) as exc:
                         result = {"ok": False, "summary": str(exc)}
+                    except PlaywrightError:
+                        result = {"ok": False, "summary":
+                                  "The browser action failed; re-observe the page or ask for help.",
+                                  "error_code": "browser_error"}
                 self._emit(run_id, "step", {"step": state.steps, "tool": name,
                                              "args": self._safe_args(args), "ok": result["ok"],
                                              "summary": result["summary"], "duration_ms": 0,
+                                             **({"error_code": result["error_code"]}
+                                                if result.get("error_code") else {}),
                                              **({"screenshot": result["screenshot"]}
                                                 if result.get("screenshot") else {})})
                 self.store.update_run(run_id, steps=state.steps)
@@ -195,6 +239,10 @@ class WorkerLoop:
                     return
                 if state.steps >= max_steps:
                     break
+                if changed_page:
+                    state.feedback.append("Page changed. Remaining calls in that model turn "
+                                          "were skipped; use the new observation.")
+                    break
         self._terminal(state, RunStatus.blocked, "The run reached its step limit.")
 
     @staticmethod
@@ -203,14 +251,20 @@ class WorkerLoop:
                 for key, value in args.items()}
 
     async def _dispatch(self, state: RuntimeState, name: str, args: dict) -> dict:
+        if name in {"browser_fill_fact", "browser_fill_text", "browser_fill_literal"}:
+            name = "browser_fill"
         if name == "browser_navigate":
+            if self.browser.page.url == args["url"]:
+                return {"ok": False,
+                        "summary": "Already on this page; use its current observation.",
+                        "progress": False}
             await self.browser.navigate(args["url"])
-            return {"ok": True, "summary": "Navigated", "progress": True}
+            observation = await self._observe(state)
+            return {"ok": True, "summary": f"Navigated and observed {observation.title}",
+                    "progress": True}
         if name == "browser_snapshot":
-            observation = await self.browser.snapshot()
             previous = list(state.observations.values())[-1] if state.observations else None
-            state.observations[observation.observation_id] = observation
-            state.observations_text.append(observation.model_dump_json())
+            observation = await self._observe(state)
             changed = previous is None or (previous.url, previous.content_hash) != (
                 observation.url, observation.content_hash)
             return {"ok": True, "summary": "Observed page", "progress": changed}
@@ -226,20 +280,27 @@ class WorkerLoop:
             else:
                 value = args["free_text"]
                 source = FillSource(kind="free_text")
+            if element.value == value:
+                return {"ok": False,
+                        "summary": f"{element.name} already has that value; move to the next field.",
+                        "progress": False}
             await self.browser.fill(args["ref"], value)
             state.fills[element.name] = value
             state.fill_sources[element.name] = source
-            return {"ok": True, "summary": f"Filled {element.name}", "progress": False}
+            await self._observe(state)
+            return {"ok": True, "summary": f"Filled {element.name}", "progress": True}
         if name == "browser_select":
             element = self._current_element(args["ref"])
             await self.browser.select(args["ref"], args["option"])
             state.fills[element.name] = args["option"]
-            return {"ok": True, "summary": f"Selected {element.name}", "progress": False}
+            await self._observe(state)
+            return {"ok": True, "summary": f"Selected {element.name}", "progress": True}
         if name == "browser_click":
             element = self._current_element(args["ref"])
             if element.submits_form:
                 return await self._submit(state, args["ref"])
             await self.browser.click(args["ref"])
+            await self._observe(state)
             return {"ok": True, "summary": f"Clicked {element.name}", "progress": True}
         if name == "reauthenticate":
             await self.browser.reauthenticate(args["app"],
@@ -248,7 +309,8 @@ class WorkerLoop:
         if name == "record_fact":
             fact = record_fact(state, args["key"], args["observation_id"],
                                args["field_locator"], FactType(args["type"]))
-            self._emit(state.run_id, "fact", fact.model_dump(mode="json"))
+            self._emit(state.run_id, "fact", {**fact.model_dump(mode="json"),
+                                               "step": state.steps})
             return {"ok": True, "summary": f"Recorded {fact.key}", "progress": True}
         if name == "commit_goal":
             if state.phase != "discover":
@@ -256,12 +318,16 @@ class WorkerLoop:
             try:
                 proposal = GoalProposal.model_validate(args["contract"])
             except ValueError:
+                self._emit(state.run_id, "contract", {"action": "rejected",
+                                                       "reason": "Unsupported task type"})
                 self._terminal(state, RunStatus.unsupported,
                                "The request does not fit a supported task type.")
                 return {"ok": False, "summary": "Unsupported task", "terminal": True}
             contract = await commit_goal(proposal, "\n".join(state.user_messages), self.probes,
                                          run_id=state.run_id)
             if isinstance(contract, GoalRejection):
+                self._emit(state.run_id, "contract", {"action": "rejected",
+                                                       "reason": contract.reason})
                 if contract.code == "needs_clarification":
                     return self._question(state, contract.reason, contract.candidates)
                 if contract.code == "unsupported":
@@ -272,9 +338,13 @@ class WorkerLoop:
             state.source_values = next((item.params["source_values"]
                                         for item in contract.obligations
                                         if "source_values" in item.params), {})
-            self._emit(state.run_id, "contract", {"contract": contract.model_dump(mode="json")})
+            self._emit(state.run_id, "contract", {"action": "committed",
+                                                   "contract": contract.model_dump(mode="json")})
             self._phase(state, "execute")
-            return {"ok": True, "summary": "Goal locked", "progress": True}
+            sources = ", ".join(source.doc_id for source in contract.sources)
+            return {"ok": True,
+                    "summary": f"Goal locked. Open portal source detail: {sources}",
+                    "progress": True}
         if name == "revise_goal":
             if not state.contract:
                 raise ValueError("No goal to revise")
@@ -283,7 +353,8 @@ class WorkerLoop:
             if isinstance(revised, GoalRejection):
                 return {"ok": False, "summary": revised.reason}
             state.contract = revised
-            self._emit(state.run_id, "contract", {"contract": revised.model_dump(mode="json")})
+            self._emit(state.run_id, "contract", {"action": "revised",
+                                                   "contract": revised.model_dump(mode="json")})
             return {"ok": True, "summary": "Goal criteria revised", "progress": True}
         if name == "update_plan":
             state.plan = args["steps"]
@@ -298,6 +369,10 @@ class WorkerLoop:
             return await self._write_export(state, args)
         if name == "ask_user":
             return self._question(state, args["question"], [])
+        if name == "unsupported":
+            reason = args["reason"].strip() or "The requested action is not supported."
+            self._terminal(state, RunStatus.unsupported, reason[:500])
+            return {"ok": True, "summary": reason[:500], "terminal": True}
         if name == "finish":
             if not state.contract:
                 self._terminal(state, RunStatus.blocked,
@@ -319,6 +394,12 @@ class WorkerLoop:
             self._phase(state, "execute")
             return {"ok": False, "summary": result.summary}
         raise ValueError("Unknown tool")
+
+    async def _observe(self, state: RuntimeState):
+        observation = await self.browser.snapshot()
+        state.observations[observation.observation_id] = observation
+        state.observations_text.append(observation.model_dump_json())
+        return observation
 
     def _current_element(self, ref: str):
         observation = self.browser.current
@@ -343,7 +424,8 @@ class WorkerLoop:
         intent = FileWriteIntent(mutation_id=uuid4().hex, run_id=state.run_id,
                                  path=f"exports/{args['name']}", probe_query=args["probe_query"])
         decision = check_file_write(state, intent)
-        self._emit(state.run_id, "gate", decision.model_dump(mode="json"))
+        self._emit(state.run_id, "gate", {"step": state.steps,
+                                           **decision.model_dump(mode="json")})
         if not decision.allowed:
             return {"ok": False, "summary": decision.reason}
         rows = await self.probes.register_invoices(
@@ -385,7 +467,11 @@ class WorkerLoop:
             source=source,
         )
         decision = check_mutation(state, intent)
-        self._emit(state.run_id, "gate", decision.model_dump(mode="json"))
+        self._emit(state.run_id, "gate", {
+            "step": state.steps, **decision.model_dump(mode="json"),
+            "mutation": {"action_url": intent.action_url, "fields": intent.fields,
+                         "target_label": ", ".join(target_key.values()) if target_key else ""},
+        })
         if not decision.allowed:
             if decision.code == "needs_approval":
                 approval = create_approval(intent, decision.reason, int(state.policy["version"]))
@@ -407,8 +493,7 @@ class WorkerLoop:
         pending = begin_pending(self.store, intent, before_values=before_values,
                                 before_version=before.get("version") if before else None)
         state.pending.append(pending)
-        self._emit(state.run_id, "pending", {"mutation_id": pending.mutation_id,
-                                             "state": pending.state})
+        self._emit(state.run_id, "pending", pending.model_dump(mode="json"))
         self.browser.guard.arm(NetworkAllowance(run_id=state.run_id,
                                                 mutation_id=intent.mutation_id,
                                                 method="POST", url=intent.action_url,
@@ -417,16 +502,15 @@ class WorkerLoop:
             await asyncio.wait_for(self.browser.click(ref), timeout=5)
         except (TimeoutError, PlaywrightError) as exc:
             self._emit(state.run_id, "error", {"code": "write_response_uncertain",
-                                                 "message": type(exc).__name__})
+                                                 "message": type(exc).__name__,
+                                                 "retryable": True})
         finally:
             self.browser.guard.disarm()
         settled = await reconcile(pending, self.probes)
         self.store.save_pending(settled.pending)
         state.pending[-1] = settled.pending
         artifact_name = await self._capture_artifact(state)
-        self._emit(state.run_id, "pending", {"mutation_id": pending.mutation_id,
-                                             "state": settled.pending.state,
-                                             "reason": settled.pending.reason})
+        self._emit(state.run_id, "pending", settled.pending.model_dump(mode="json"))
         if self.browser.last_navigation_status == 403:
             body = await self.browser.page.locator("body").inner_text()
             try:

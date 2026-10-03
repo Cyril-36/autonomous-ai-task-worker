@@ -46,9 +46,11 @@ async def test_fake_provider_injects_error():
 async def test_provider_retries_each_call_through_ledger(tmp_path):
     class Create:
         attempts = 0
+        last_request = None
 
         async def create(self, **request):
             self.attempts += 1
+            self.last_request = request
             if self.attempts == 1:
                 raise TimeoutError()
             usage = SimpleNamespace(model_dump=lambda: {"prompt_tokens": 2,
@@ -69,6 +71,7 @@ async def test_provider_retries_each_call_through_ledger(tmp_path):
                                      tools=[], max_tokens=10, run_id="r1")
     assert result.content == "done"
     assert [item.state for item in ledger.entries("r1")] == ["charged_unknown", "settled"]
+    assert create.last_request["parallel_tool_calls"] is False
 
 
 @pytest.mark.asyncio

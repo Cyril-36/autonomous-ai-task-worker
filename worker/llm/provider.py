@@ -57,7 +57,8 @@ class Provider:
     async def complete(self, *, messages: list[dict], tools: list[dict],
                        max_tokens: int, run_id: str) -> ProviderResponse:
         request = {"model": self.model, "messages": messages, "tools": tools,
-                   "tool_choice": "required", "max_tokens": max_tokens}
+                   "tool_choice": "required", "parallel_tool_calls": False,
+                   "max_tokens": max_tokens}
         for attempt in range(3):
             entry = self.ledger.reserve(run_id, self.model, request)
             try:

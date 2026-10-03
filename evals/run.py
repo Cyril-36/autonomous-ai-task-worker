@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from uuid import uuid4
 
 import uvicorn
 import yaml
@@ -41,6 +42,27 @@ from worker.verify.probes import Probes
 SCENARIOS = Path(__file__).with_name("scenarios.yaml")
 REPORT = Path(__file__).with_name("REPORT.md")
 LIVE_REPORT = Path(__file__).with_name("LIVE_REPORT.md")
+LIVE_TARGETED_REPORT = Path(__file__).with_name("LIVE_TARGETED_REPORT.md")
+LIVE_FLASH_REPORT = Path(__file__).with_name("LIVE_FLASH_REPORT.md")
+
+
+def resolve_live_model(requested: str | None) -> str:
+    model = requested or "google/gemini-2.5-flash-lite"
+    if model not in load_pricing().models:
+        raise ValueError(f"No price configured for live model: {model}")
+    return model
+
+
+def select_cases(cases: list[dict], *, live: bool, limit: int | None,
+                 case_ids: list[str] | None = None) -> tuple[list[dict], list[str]]:
+    excluded = [case["id"] for case in cases if live and not case.get("live_eligible", True)]
+    selected = [case for case in cases if not live or case.get("live_eligible", True)]
+    if case_ids:
+        missing = set(case_ids) - {case["id"] for case in selected}
+        if missing:
+            raise ValueError(f"Unknown or unavailable scenarios: {', '.join(sorted(missing))}")
+        selected = [case for case in selected if case["id"] in case_ids]
+    return (selected[:limit] if limit else selected), excluded
 
 
 async def _serve(app):
@@ -74,7 +96,9 @@ def _apply_fault(path: Path, fault: str | None) -> None:
 
 
 async def run_case(case: dict, *, reference_date: date, live: bool = False,
-                   ledger: Ledger | None = None, settings: Settings | None = None) -> dict:
+                   ledger: Ledger | None = None, settings: Settings | None = None,
+                   max_steps: int = 60) -> dict:
+    run_id = f"{case['id']}-{uuid4().hex[:12]}"
     with tempfile.TemporaryDirectory(prefix=f"centeralign-{case['id']}-") as directory:
         root = Path(directory)
         portal_db, register_db = root / "portal.db", root / "register.db"
@@ -91,7 +115,7 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
         try:
             _apply_fault(register_db, case.get("fault"))
             principal = _principal(case["principal"])
-            browser = await BrowserSession.start(case["id"], principal,
+            browser = await BrowserSession.start(run_id, principal,
                                                  portal_url=portal_url, register_url=register_url)
             cookies = await browser.context.cookies(register_url)
             register_session = next(item["value"] for item in cookies
@@ -113,7 +137,7 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
                                     model=settings.model, ledger=ledger)
             else:
                 provider = FakeProvider(fake_script(case, portal_url, register_url))
-            store.create_run(case["id"], case["request"], principal, provider.model)
+            store.create_run(run_id, case["request"], principal, provider.model)
             worker = WorkerLoop(store=store, provider=provider, browser=browser,
                                 probes=probes, workspace=WorkspaceFiles(workspace),
                                 portal_url=portal_url, register_url=register_url)
@@ -121,7 +145,7 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
                 if case["kind"] == "crash":
                     if live:
                         raise ValueError("Crash recovery scenario uses the deterministic provider")
-                    running = asyncio.create_task(worker.run(case["id"]))
+                    running = asyncio.create_task(worker.run(run_id, max_steps=max_steps))
                     try:
                         for _ in range(300):
                             await asyncio.sleep(0.02)
@@ -130,7 +154,7 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
                                                    "WHERE invoice_number='LS-1042'").fetchone()[0]
                             if saved == 1 and any(
                                 item.state == "dispatching"
-                                for item in store.pending_for_run(case["id"])
+                                for item in store.pending_for_run(run_id)
                             ):
                                 break
                         else:
@@ -140,8 +164,8 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
                         await asyncio.gather(running, return_exceptions=True)
                     await probes.close()
                     await browser.close()
-                    store.update_run(case["id"], status="interrupted")
-                    browser = await BrowserSession.start(case["id"], principal,
+                    store.update_run(run_id, status="interrupted")
+                    browser = await BrowserSession.start(run_id, principal,
                                                          portal_url=portal_url,
                                                          register_url=register_url)
                     cookies = await browser.context.cookies(register_url)
@@ -155,20 +179,20 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
                     ]), browser=browser, probes=probes,
                         workspace=WorkspaceFiles(workspace), portal_url=portal_url,
                         register_url=register_url)
-                await worker.run(case["id"])
-                if case.get("decision") and store.get_run(case["id"]).status == "awaiting_approval":
-                    approval = store.approvals(case["id"])[0]
+                await worker.run(run_id, max_steps=max_steps)
+                if case.get("decision") and store.get_run(run_id).status == "awaiting_approval":
+                    approval = store.approvals(run_id)[0]
                     decided = decide_approval(Approval.model_validate(approval),
                                               case["decision"], principal.email)
-                    store.save_approval(decided.approval_id, case["id"],
+                    store.save_approval(decided.approval_id, run_id,
                                         decided.model_dump(mode="json"))
-                    await worker.run(case["id"])
+                    await worker.run(run_id, max_steps=max_steps)
             except Exception as exc:  # noqa: BLE001 - preserve the case and report failure
-                store.update_run(case["id"], status="failed", phase="done")
-                store.append_event(case["id"], "error", {
+                store.update_run(run_id, status="failed", phase="done")
+                store.append_event(run_id, "error", {
                     "code": "eval_case_error", "message": type(exc).__name__, "retryable": False,
                 })
-            return inspect_case(case, store, case["id"], portal_db, register_db, workspace)
+            return inspect_case(case, store, run_id, portal_db, register_db, workspace)
         finally:
             if probes:
                 await probes.close()
@@ -186,15 +210,19 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--case", action="append", dest="case_ids")
+    parser.add_argument("--model")
+    parser.add_argument("--max-steps", type=int, default=60)
     arguments = parser.parse_args()
     fixture = yaml.safe_load(SCENARIOS.read_text())
-    cases = fixture["scenarios"][:arguments.limit] if arguments.limit else fixture["scenarios"]
+    cases, excluded = select_cases(fixture["scenarios"], live=arguments.live,
+                                   limit=arguments.limit, case_ids=arguments.case_ids)
     reference_date = date.fromisoformat(str(fixture["reference_date"]))
     ledger = None
     settings = None
     if arguments.live:
         load_dotenv(ROOT / ".env", override=False)
-        settings = replace(Settings.from_env(), model="google/gemini-2.5-flash-lite")
+        settings = replace(Settings.from_env(), model=resolve_live_model(arguments.model))
         if not settings.api_key:
             raise SystemExit("AICREDITS_API_KEY must be configured locally for live eval")
         pricing = load_pricing()
@@ -208,14 +236,17 @@ async def main() -> None:
                                < ledger.pricing.run_limit_inr):
             break
         result = await run_case(case, reference_date=reference_date,
-                                live=arguments.live, ledger=ledger, settings=settings)
+                                live=arguments.live, ledger=ledger, settings=settings,
+                                max_steps=arguments.max_steps)
         results.append(result)
         print(f"{case['id']}: {'PASS' if result['success'] else 'FAIL'} "
               f"({result['actual_status']}; ₹{result['cost_inr']})")
     report = render_report(results, model=settings.model if settings else "fake",
                            tier="live" if arguments.live else "fake",
-                           reference_date=str(reference_date), seed=fixture["seed"])
-    target = LIVE_REPORT if arguments.live else REPORT
+                           reference_date=str(reference_date), seed=fixture["seed"],
+                           excluded=excluded)
+    target = (LIVE_FLASH_REPORT if settings and settings.model == "google/gemini-2.5-flash"
+              else LIVE_TARGETED_REPORT if arguments.case_ids else LIVE_REPORT) if arguments.live else REPORT
     target.write_text(report)
     print(f"Report: {target}")
 

@@ -41,6 +41,7 @@ scenarios:
     expect_zero_writes: true
   - id: missing_source
     kind: missing_source
+    live_eligible: false
     principal: ravi
     request: Register the latest invoice from Larkspur Supplies
     expected_status: awaiting_input
@@ -167,18 +168,21 @@ scenarios:
     expect_zero_writes: true
   - id: provider_failure
     kind: provider_failure
+    live_eligible: false
     principal: ravi
     request: Register the latest invoice from Larkspur Supplies
     expected_status: failed
     expect_zero_writes: true
   - id: stale_ref
     kind: stale_ref
+    live_eligible: false
     principal: ravi
     request: Register the latest invoice from Larkspur Supplies
     expected_status: awaiting_input
     expect_zero_writes: true
   - id: offsite_navigation
     kind: offsite
+    live_eligible: false
     principal: ravi
     request: Register the latest invoice from Larkspur Supplies
     expected_status: awaiting_input
@@ -239,6 +243,7 @@ scenarios:
     expected_status: pass
   - id: crash_after_dispatch
     kind: crash
+    live_eligible: false
     principal: ravi
     request: Register the latest invoice from Larkspur Supplies
     supplier: Larkspur Supplies

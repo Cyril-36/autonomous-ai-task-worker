@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,13 @@ def _rows(path: Path, query: str, params: tuple = ()) -> list[dict]:
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         return [dict(row) for row in db.execute(query, params)]
+
+
+def _event_diagnostic(event) -> str:
+    data = event.data
+    summary = data.get("summary") or data.get("reason") or data.get("message") or ""
+    return (f"{data.get('tool', event.type)} "
+            f"{json.dumps(data.get('args', {}), ensure_ascii=False)}: {summary}")
 
 
 def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: Path,
@@ -80,7 +88,7 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
     latency = (datetime.fromisoformat(run.updated_at.isoformat()) -
                datetime.fromisoformat(run.created_at.isoformat())).total_seconds()
     return {
-        "id": case["id"], "kind": "task", "success": success,
+        "id": case["id"], "run_id": run_id, "kind": "task", "success": success,
         "actual_status": actual_status,
         "expected_status": expected_status, "field_correct": field_correct,
         "saved_record_present": saved_record_present,
@@ -88,4 +96,6 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
         "duplicates": duplicates, "tool_calls": sum(event.type == "step" for event in events),
         "latency_s": max(0, latency), "cost_inr": str(run.cost_inr),
         "export_correct": export_ok,
+        "diagnostics": [_event_diagnostic(event) for event in events
+                        if event.type in {"step", "run_status", "verification", "error"}][-30:],
     }

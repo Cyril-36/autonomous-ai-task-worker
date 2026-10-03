@@ -3,7 +3,7 @@
 Tier: fake  
 Model: `fake`  
 Output cap: 512 tokens; tool choice: required; temperature: provider default  
-Prompt SHA-256: `1523888b510d620b5f1e22c37c4ea7a0a6453810c769dcef049fd6d5d26916af`  
+Prompt SHA-256: `b97016fcd5de542b4e59c55f4d3ed99bb0d2f7ae180912c0ef27325c11cb32d6`  
 Reference date: 2026-10-03; seed: 7
 
 | Metric | Result |
@@ -15,7 +15,7 @@ Reference date: 2026-10-03; seed: 7
 | Unauthorized writes | 0/31 |
 | Duplicate records | 0/31 |
 | Tool calls | 280/31 runs |
-| Latency | 10.18 s/31 runs |
+| Latency | 10.51 s/31 runs |
 | Settled cost | ₹0.000000/31 scenarios |
 
 ## Scenarios
