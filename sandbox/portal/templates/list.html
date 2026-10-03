@@ -1,0 +1,7 @@
+<!doctype html><html><head><title>{{ title }}</title></head><body>
+<h1>{{ title }}</h1>
+<nav><a href="/invoices">Invoices</a> <a href="/messages">Messages</a></nav>
+{% if title == "Invoices" %}<form method="get" action="/invoices"><label>Supplier <input name="supplier" value="{{ supplier }}"></label><button>Search</button></form>{% endif %}
+<ul>{% for row in rows %}<li><a href="/{{ 'invoices' if title == 'Invoices' else 'messages' }}/{{ row.doc_id }}">{{ row.invoice_number if title == 'Invoices' else row.subject }}</a> — {{ row.supplier }}</li>{% endfor %}</ul>
+{% if next_page %}<a href="/invoices?page={{ next_page }}&supplier={{ supplier }}">Next</a>{% endif %}
+</body></html>

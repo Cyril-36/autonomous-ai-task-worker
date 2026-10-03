@@ -1,0 +1,1 @@
+"""Shared synthetic sandbox fixtures."""

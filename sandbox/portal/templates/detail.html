@@ -1,0 +1,4 @@
+<!doctype html><html><head><title>{{ row.invoice_number if kind == 'invoice' else row.subject }}</title></head><body>
+<nav><a href="/invoices">Invoices</a> <a href="/messages">Messages</a></nav>
+<article data-doc-id="{{ row.doc_id }}" data-revision="{{ row.revision }}" data-kind="{{ kind }}"><h1>{{ row.invoice_number if kind == 'invoice' else row.subject }}</h1><dl>{% for label, value in fields %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl></article>
+</body></html>
