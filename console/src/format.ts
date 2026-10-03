@@ -46,6 +46,11 @@ export function formatInr(amount: string): string {
 const TOOLS: Record<string, string> = {
   setup: "Sign in",
   browser_navigate: "Open page",
+  open_page: "Open page",
+  record_facts: "Note facts",
+  fill_form: "Fill form",
+  submit_form: "Submit",
+  unsupported: "Decline",
   browser_click: "Click",
   browser_fill: "Type",
   browser_select: "Choose",
