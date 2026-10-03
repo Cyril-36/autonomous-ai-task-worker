@@ -130,11 +130,17 @@ export function FactsPanel({ facts, order }: { facts: Record<string, Fact>; orde
                 <dd className="fact-val">{shown(f)}</dd>
                 <dd className="fact-from">
                   {f.value !== shown(f) && <>shown as “{f.value}”, </>}
-                  <a href={f.url} target="_blank" rel="noreferrer">
-                    {where.app}
-                    {f.doc_id ? ` ${f.doc_id}` : ""}
-                  </a>
-                  {f.revision && <> revision {f.revision}</>}
+                  {f.url.startsWith("goal:") ? (
+                    "fixed by the locked goal"
+                  ) : (
+                    <>
+                      <a href={f.url} target="_blank" rel="noreferrer">
+                        {where.app}
+                        {f.doc_id ? ` ${f.doc_id}` : ""}
+                      </a>
+                      {f.revision && <> revision {f.revision}</>}
+                    </>
+                  )}
                 </dd>
               </div>
             );

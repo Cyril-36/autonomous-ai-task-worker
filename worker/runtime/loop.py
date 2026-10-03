@@ -53,6 +53,16 @@ def _slug(text: str) -> str:
     return "_".join(_norm_label(text).split())
 
 
+def field_label(element) -> str:
+    """The visible label only: select names also contain every option's text."""
+    return element.name.split("\n")[0].strip()
+
+
+def visible_fields(observation) -> list[str]:
+    return [field_label(item) for item in observation.elements
+            if item.role in FILLABLE and item.value is not None and item.name != "form_token"]
+
+
 def find_by_label(observation, label: str, roles: set[str] = FILLABLE):
     """Resolve a visible field label to one element; select names include their options."""
     wanted = _norm_label(label)
@@ -60,7 +70,7 @@ def find_by_label(observation, label: str, roles: set[str] = FILLABLE):
     exact = [item for item in fields if _norm_label(item.name) == wanted]
     matches = exact or [item for item in fields if _norm_label(item.name).startswith(wanted + " ")]
     if len(matches) != 1:
-        labels = sorted({item.name.split("  ")[0][:40] for item in fields})
+        labels = sorted({field_label(item)[:40] for item in fields if item.name != "form_token"})
         problem = "matches several fields" if matches else "is not a field on this page"
         raise ValueError(f"Label '{label}' {problem}. Fields here: {', '.join(labels)}")
     return matches[0]
@@ -479,8 +489,7 @@ class WorkerLoop:
         for block in observation.documents:
             labels = ", ".join(field.label for field in block.fields)
             parts.append(f"document {block.doc_id} revision {block.revision} with fields: {labels}")
-        forms = [item.name.split("  ")[0][:40] for item in observation.elements
-                 if item.role in FILLABLE]
+        forms = visible_fields(observation)
         if forms:
             parts.append("form fields: " + ", ".join(forms))
         return "; ".join(parts)

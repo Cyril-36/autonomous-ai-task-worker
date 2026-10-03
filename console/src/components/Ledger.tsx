@@ -16,7 +16,7 @@ interface Row {
 }
 
 const PENDING: Record<PendingState, { kind: string; tone: Kind }> = {
-  dispatching: { kind: "Unsure", tone: "k-wait" },
+  dispatching: { kind: "Saving", tone: "k-run" },
   committed: { kind: "Confirmed", tone: "k-ok" },
   rejected: { kind: "Refused", tone: "k-stop" },
   voided: { kind: "Not saved", tone: "k-run" },
@@ -49,7 +49,7 @@ function toRow(item: TimelineItem): Row {
         kind: d.skipped ? "Skipped" : toolLabel(d.tool),
         tone: failed ? "k-stop" : "",
         text: d.summary,
-        sub: <UrlNote url={d.url} extra={[failed && d.error_code ? `error: ${d.error_code}` : "", seconds(d.duration_ms)].filter(Boolean).join(", ")} />,
+        sub: <UrlNote url={d.url} extra={[failed && d.error_code ? `error: ${d.error_code}` : "", d.duration_ms > 0 ? seconds(d.duration_ms) : ""].filter(Boolean).join(", ")} />,
         screenshot: d.screenshot,
       };
     }
@@ -111,7 +111,7 @@ function toRow(item: TimelineItem): Row {
       const d = item.data;
       const meta = PENDING[d.state];
       const fallback = {
-        dispatching: "Sent a save and got no answer. Further changes to this record wait until the outcome is known.",
+        dispatching: "Recorded the save before sending it, so its outcome can always be checked. Other changes to this record wait until it is settled.",
         committed: "The register confirms the save went through.",
         rejected: "The register refused the change.",
         voided: "Confirmed the save never happened, so it is safe to try again.",
