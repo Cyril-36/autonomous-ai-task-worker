@@ -125,7 +125,8 @@ class WorkerLoop:
                                       observations=state.observations_text,
                                       facts=[item.model_dump(mode="json") for item in state.facts.values()],
                                       plan=state.plan, feedback=state.feedback,
-                                      policy=state.policy)
+                                      policy=state.policy, portal_url=self.portal_url,
+                                      register_url=self.register_url)
             try:
                 response = await self.provider.complete(messages=messages, tools=TOOLS,
                                                         max_tokens=512, run_id=run_id)

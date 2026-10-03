@@ -102,7 +102,7 @@ class Store:
         if steps is not None:
             updates["steps"] = steps
         if cost_inr is not None:
-            updates["cost_inr"] = f"{cost_inr:.2f}"
+            updates["cost_inr"] = str(cost_inr)
         clause = ", ".join(f"{key}=?" for key in updates)
         with self.connect() as db:
             db.execute(f"UPDATE runs SET {clause} WHERE run_id=?", (*updates.values(), run_id))

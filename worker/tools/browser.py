@@ -235,6 +235,7 @@ class BrowserSession:
         return result
 
     async def close(self) -> None:
+        await self.context.unroute_all(behavior="ignoreErrors")
         await self.context.close()
         await self.browser.close()
         await self.driver.stop()
