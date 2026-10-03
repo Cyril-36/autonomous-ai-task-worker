@@ -14,6 +14,6 @@ def test_settings_use_documented_defaults(tmp_path, monkeypatch):
 
 def test_prices_and_limits_are_decimal():
     pricing = load_pricing()
-    assert pricing.global_limit_inr == Decimal(30)
+    assert pricing.global_limit_inr == Decimal(50)
     assert pricing.run_limit_inr == Decimal(4)
     assert pricing.models["google/gemini-2.5-flash"].input_per_million == Decimal("30.36")

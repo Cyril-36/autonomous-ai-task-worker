@@ -540,3 +540,64 @@ async def test_contact_update_requires_approval_and_verifies_source(tmp_path):
         register_server.should_exit = True
         await portal_task
         await register_task
+
+
+@pytest.mark.parametrize("layout", ["a", "b"])
+@pytest.mark.asyncio
+async def test_task_level_tools_complete_intake_on_either_form_layout(tmp_path, layout):
+    """open_page/record_facts/fill_form/submit_form, with labels resolved by code, no refs."""
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    if layout == "b":
+        with connect(tmp_path / "register.db") as db:
+            db.execute("UPDATE faults SET layout_variant='b' WHERE id=1")
+    principal = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi",
+                          role="operator")
+    browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                         register_url=register_url)
+    cookies = await browser.context.cookies(register_url)
+    session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+    probes = Probes(portal_url=portal_url, register_url=register_url, probe_key="probe-demo",
+                    register_session=session, workspace=tmp_path / "workspace")
+    store = Store(tmp_path / "worker.db")
+    store.create_run("r1", "Register the latest invoice from Larkspur Supplies", principal, "fake")
+    amount, due = ("Total", "Payment due") if layout == "b" else ("Amount", "Due date")
+    script = [
+        {"tool": "commit_goal", "arguments": {"contract": {
+            "goal_type": "register_invoice", "supplier": "Larkspur Supplies", "selector": "latest"}}},
+        {"tool": "open_page", "arguments": {"app": "portal", "page": "invoice", "id": "ls-1042"}},
+        {"tool": "record_facts", "arguments": {
+            "labels": ["Invoice number", "Amount", "Due date", "Currency"]}},
+        {"tool": "open_page", "arguments": {"app": "register", "page": "new_invoice"}},
+        {"tool": "fill_form", "arguments": {"fields": [
+            {"label": "Supplier", "fact": "goal.supplier"},
+            {"label": "Invoice number", "fact": "ls-1042.invoice_number"},
+            {"label": amount, "fact": "ls-1042.amount"},
+            {"label": due, "fact": "ls-1042.due_date"},
+            {"label": "Currency", "fact": "ls-1042.currency"},
+            {"label": "Source document", "fact": "ls-1042.document_id"},
+        ]}},
+        {"tool": "submit_form"},
+        {"tool": "finish", "arguments": {"summary": "Done"}},
+    ]
+    try:
+        worker = WorkerLoop(store=store, provider=FakeProvider(script), browser=browser,
+                            probes=probes, workspace=WorkspaceFiles(tmp_path / "workspace"),
+                            portal_url=portal_url, register_url=register_url)
+        await worker.run("r1")
+        steps = [(event.data["tool"], event.data["ok"], event.data["summary"])
+                 for event in store.events("r1") if event.type == "step"]
+        assert store.get_run("r1").status == "completed", steps
+        with connect(tmp_path / "register.db") as db:
+            assert db.execute("SELECT COUNT(*) FROM invoices WHERE invoice_number='LS-1042'"
+                              ).fetchone()[0] == 1
+        assert len(steps) == 7
+    finally:
+        await probes.close()
+        await browser.close()
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task

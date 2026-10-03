@@ -1,0 +1,30 @@
+# Company context: the applications the worker may use and how this company does each kind of work.
+# The runtime and prompt contain no routes; adding an app or a procedure is a change here
+# (plus a read-only probe for verification), not a change to the agent.
+
+apps:
+  portal:
+    title: Supplier portal
+    purpose: External site where suppliers publish their invoices and messages. Read only for us.
+    pages:
+      invoices: {path: /invoices, about: "All supplier invoices, newest first, filterable by supplier. Open one to see its fields."}
+      invoice: {path: "/invoices/{id}", about: "One invoice document with labelled fields. id is the document id, e.g. doc_ls1042."}
+      messages: {path: /messages, about: "Messages from suppliers, such as contact changes."}
+      message: {path: "/messages/{id}", about: "One message document with labelled fields. id is the document id."}
+  register:
+    title: Internal register
+    purpose: Halden Traders' system of record. Changes are made here, as the signed-in user.
+    pages:
+      invoices: {path: /invoices, about: "Invoices already registered."}
+      new_invoice: {path: /invoices/new, about: "Form that registers one invoice."}
+      suppliers: {path: /suppliers, about: "Supplier directory."}
+      supplier_edit: {path: "/suppliers/{id}/edit", about: "Form that changes one supplier's contact details. id is the supplier id."}
+
+# How each supported goal type is carried out here. read: where each frozen source is read.
+# write: where its values are entered. The field map that links them comes from the locked goal.
+procedures:
+  register_invoice: {read: portal.invoice, write: register.new_invoice}
+  check_or_register_invoice: {read: portal.invoice, write: register.new_invoice}
+  register_batch: {read: portal.invoice, write: register.new_invoice}
+  update_supplier_contact: {read: portal.message, write: register.supplier_edit}
+  export_invoices: {write: workspace.exports}

@@ -13,6 +13,7 @@ from playwright.async_api import Error as PlaywrightError
 from worker.contracts import (
     Approval,
     ApprovalStatus,
+    Fact,
     FactType,
     FileWriteIntent,
     FillSource,
@@ -27,6 +28,7 @@ from worker.policy.approvals import create_approval, validate_approval
 from worker.policy.gate import check_file_write, check_mutation
 from worker.policy.pending import begin_pending, reconcile
 from worker.policy.provenance import record_fact
+from worker.runtime.apps import Apps
 from worker.runtime.prompts import build_messages
 from worker.runtime.recovery import reconcile_all
 from worker.runtime.stall import StallDetector
@@ -38,7 +40,39 @@ from worker.verify.verifier import verify
 
 PAGE_CHANGING = {"browser_navigate", "browser_click", "browser_fill",
                  "browser_fill_fact", "browser_fill_text", "browser_fill_literal",
-                 "browser_select"}
+                 "browser_select", "open_page", "fill_form", "submit_form"}
+FILLABLE = {"textbox", "date", "textarea", "combobox"}
+
+
+def _norm_label(text: str) -> str:
+    return " ".join(text.replace("*", " ").replace(":", " ").split()).casefold()
+
+
+def _slug(text: str) -> str:
+    return "_".join(_norm_label(text).split())
+
+
+def find_by_label(observation, label: str, roles: set[str] = FILLABLE):
+    """Resolve a visible field label to one element; select names include their options."""
+    wanted = _norm_label(label)
+    fields = [item for item in observation.elements if item.role in roles]
+    exact = [item for item in fields if _norm_label(item.name) == wanted]
+    matches = exact or [item for item in fields if _norm_label(item.name).startswith(wanted + " ")]
+    if len(matches) != 1:
+        labels = sorted({item.name.split("  ")[0][:40] for item in fields})
+        problem = "matches several fields" if matches else "is not a field on this page"
+        raise ValueError(f"Label '{label}' {problem}. Fields here: {', '.join(labels)}")
+    return matches[0]
+
+
+def action_line(step: int, name: str, args: dict, result: dict) -> str:
+    """One compact line of the model's own history: what it did and what happened."""
+    shown = {key: value for key, value in args.items() if key != "observation_id"}
+    text = json.dumps(shown, ensure_ascii=False, default=str)
+    if len(text) > 180:
+        text = text[:177] + "..."
+    status = "ok" if result.get("ok") else "FAILED"
+    return f"#{step} {name} {text} -> {status}: {str(result.get('summary', ''))[:300]}"
 
 
 def ready_to_finish(state: RuntimeState) -> bool:
@@ -71,6 +105,7 @@ class WorkerLoop:
         self.portal_url = portal_url
         self.register_url = register_url
         self.trace = trace
+        self.apps = Apps.load({"portal": portal_url, "register": register_url})
 
     def _emit(self, run_id: str, kind: str, data: dict) -> None:
         self.store.append_event(run_id, kind, data)
@@ -148,8 +183,7 @@ class WorkerLoop:
                                       observations=state.observations_text,
                                       facts=[item.model_dump(mode="json") for item in state.facts.values()],
                                       plan=state.plan, feedback=state.feedback,
-                                      policy=state.policy, portal_url=self.portal_url,
-                                      register_url=self.register_url)
+                                      policy=state.policy, apps=self.apps)
             try:
                 ready_to_verify = ready_to_finish(state)
                 approved_form_pending = bool(
@@ -162,13 +196,7 @@ class WorkerLoop:
                                                             allow_revision=state.verify_rounds > 0,
                                                             ready_to_verify=ready_to_verify,
                                                             approved_form_pending=
-                                                            approved_form_pending,
-                                                            contract=state.contract,
-                                                            facts=list(state.facts.values()),
-                                                            portal_url=self.portal_url,
-                                                            register_url=self.register_url,
-                                                            observation=self.browser.current
-                                                            if self.browser else None),
+                                                            approved_form_pending),
                                                         max_tokens=512, run_id=run_id)
             except BudgetExceeded:
                 self._terminal(state, RunStatus.blocked, "The estimated local spending limit was reached.")
@@ -224,7 +252,7 @@ class WorkerLoop:
                                              **({"screenshot": result["screenshot"]}
                                                 if result.get("screenshot") else {})})
                 self.store.update_run(run_id, steps=state.steps)
-                state.feedback.append(f"{name}: {'ok' if result['ok'] else 'failed'}: {result['summary']}")
+                state.feedback.append(action_line(state.steps, name, self._safe_args(args), result))
                 self._checkpoint(state)
                 if name in PAGE_CHANGING and result["ok"]:
                     changed_page = True
@@ -240,8 +268,9 @@ class WorkerLoop:
                 if state.steps >= max_steps:
                     break
                 if changed_page:
-                    state.feedback.append("Page changed. Remaining calls in that model turn "
-                                          "were skipped; use the new observation.")
+                    if len(response.tool_calls) > 1:
+                        state.feedback.append("(Page changed, so the rest of that turn's calls "
+                                              "were skipped. Use the new observation.)")
                     break
         self._terminal(state, RunStatus.blocked, "The run reached its step limit.")
 
@@ -251,6 +280,24 @@ class WorkerLoop:
                 for key, value in args.items()}
 
     async def _dispatch(self, state: RuntimeState, name: str, args: dict) -> dict:
+        if name == "open_page":
+            url = self.apps.url(args["app"], args["page"], args.get("id"))
+            if self.browser.page.url == url and self.browser.current is not None:
+                return {"ok": False, "summary": "Already on this page; use its current observation.",
+                        "progress": False}
+            await self.browser.navigate(url)
+            observation = await self._observe(state)
+            return {"ok": True, "summary": self._page_summary(observation), "progress": True}
+        if name == "record_facts":
+            return self._record_facts(state, args)
+        if name == "fill_form":
+            return await self._fill_form(state, args["fields"])
+        if name == "submit_form":
+            observation = self.browser.current or await self._observe(state)
+            submits = [item for item in observation.elements if item.submits_form]
+            if len(submits) != 1:
+                return {"ok": False, "summary": "This page has no single form to submit."}
+            return await self._submit(state, submits[0].ref)
         if name in {"browser_fill_fact", "browser_fill_text", "browser_fill_literal"}:
             name = "browser_fill"
         if name == "browser_navigate":
@@ -341,9 +388,10 @@ class WorkerLoop:
             self._emit(state.run_id, "contract", {"action": "committed",
                                                    "contract": contract.model_dump(mode="json")})
             self._phase(state, "execute")
-            sources = ", ".join(source.doc_id for source in contract.sources)
+            self._goal_facts(state)
+            sources = ", ".join(f"{source.key} ({source.doc_id})" for source in contract.sources)
             return {"ok": True,
-                    "summary": f"Goal locked. Open portal source detail: {sources}",
+                    "summary": "Goal locked." + (f" Sources: {sources}." if sources else ""),
                     "progress": True}
         if name == "revise_goal":
             if not state.contract:
@@ -395,6 +443,110 @@ class WorkerLoop:
             return {"ok": False, "summary": result.summary}
         raise ValueError("Unknown tool")
 
+    @staticmethod
+    def _page_summary(observation) -> str:
+        parts = [f"Opened '{observation.title}'"]
+        for block in observation.documents:
+            labels = ", ".join(field.label for field in block.fields)
+            parts.append(f"document {block.doc_id} revision {block.revision} with fields: {labels}")
+        forms = [item.name.split("  ")[0][:40] for item in observation.elements
+                 if item.role in FILLABLE]
+        if forms:
+            parts.append("form fields: " + ", ".join(forms))
+        return "; ".join(parts)
+
+    def _goal_facts(self, state: RuntimeState) -> None:
+        """Values the locked goal already fixes; the model uses them, never re-types them."""
+        contract = state.contract
+        values = {}
+        if contract.supplier_name:
+            values["goal.supplier"] = contract.supplier_name
+        for source in contract.sources:
+            values[f"{source.doc_id}.document_id"] = source.doc_id
+        for key, value in values.items():
+            fact = Fact(key=key, value=value, normalized=value, type=FactType.text,
+                        observation_id="goal", url="goal://locked", doc_id=None,
+                        revision=None, field_locator=key)
+            state.facts[key] = fact
+            self._emit(state.run_id, "fact", {**fact.model_dump(mode="json"), "step": state.steps})
+
+    def _record_facts(self, state: RuntimeState, args: dict) -> dict:
+        if args.get("observation_id"):
+            observation = state.observations.get(args["observation_id"])
+        else:
+            observation = next((item for item in reversed(list(state.observations.values()))
+                                if item.documents), None)
+        if observation is None or not observation.documents:
+            return {"ok": False, "summary": "No labelled document is open. Open the document's "
+                                            "page first."}
+        types = ({item.source_label: item.type for item in state.contract.field_map}
+                 if state.contract else {})
+        available = {field.label for block in observation.documents for field in block.fields}
+        recorded, missing = [], []
+        for wanted in args["labels"]:
+            label = next((item for item in available
+                          if _norm_label(item) == _norm_label(str(wanted))), None)
+            if label is None:
+                missing.append(str(wanted))
+                continue
+            block = next(item for item in observation.documents
+                         if any(field.label == label for field in item.fields))
+            key = f"{block.doc_id}.{_slug(label)}"
+            state.facts.pop(key, None)
+            fact = record_fact(state, key, observation.observation_id, label,
+                               types.get(label, FactType.text))
+            self._emit(state.run_id, "fact", {**fact.model_dump(mode="json"), "step": state.steps})
+            recorded.append(f"{key} = {fact.normalized}")
+        if not recorded:
+            return {"ok": False, "summary": f"None of those labels are on this document. "
+                                            f"Labels here: {', '.join(sorted(available))}"}
+        note = f" Not found: {', '.join(missing)}." if missing else ""
+        return {"ok": True, "summary": "Recorded " + "; ".join(recorded) + "." + note,
+                "progress": True}
+
+    async def _fill_form(self, state: RuntimeState, items: list) -> dict:
+        observation = self.browser.current or await self._observe(state)
+        plan = []
+        for item in items:
+            if not isinstance(item, dict) or "label" not in item or \
+                    sum(key in item for key in ("fact", "text")) != 1:
+                return {"ok": False, "summary": "Each field needs a label and exactly one of "
+                                                "fact or text."}
+            element = find_by_label(observation, item["label"])
+            if "fact" in item:
+                fact = state.facts.get(item["fact"])
+                if fact is None:
+                    known = ", ".join(sorted(state.facts)) or "none yet"
+                    return {"ok": False, "summary": f"Unknown fact {item['fact']}. Facts: {known}"}
+                plan.append((item["label"], element, fact.normalized,
+                             FillSource(kind="fact", fact_key=fact.key)))
+            else:
+                plan.append((item["label"], element, str(item["text"]),
+                             FillSource(kind="free_text")))
+        filled, unchanged = [], []
+        for label, element, value, source in plan:
+            current = self.browser.current or await self.browser.snapshot()
+            element = find_by_label(current, label)
+            if element.role == "combobox":
+                if value not in element.options:
+                    return {"ok": False, "summary": f"'{value}' is not an option for {label}. "
+                                                    f"Options: {', '.join(element.options)}"}
+                await self.browser.select(element.ref, value)
+            elif element.value == value:
+                unchanged.append(label)
+                continue
+            else:
+                await self.browser.fill(element.ref, value)
+            state.fills[element.name] = value
+            state.fill_sources[element.name] = source
+            filled.append(label)
+        await self._observe(state)
+        if not filled:
+            return {"ok": False, "summary": "Every field already had that value; submit the form "
+                                            "or change something else.", "progress": False}
+        note = f" Already set: {', '.join(unchanged)}." if unchanged else ""
+        return {"ok": True, "summary": f"Filled {', '.join(filled)}.{note}", "progress": True}
+
     async def _observe(self, state: RuntimeState):
         observation = await self.browser.snapshot()
         state.observations[observation.observation_id] = observation
@@ -421,8 +573,12 @@ class WorkerLoop:
         return {"ok": True, "summary": question, "pause": True}
 
     async def _write_export(self, state: RuntimeState, args: dict) -> dict:
+        name = args["name"] if args["name"].endswith(".csv") else args["name"] + ".csv"
+        query = (state.contract.filter if state.contract and state.contract.filter is not None
+                 else args.get("probe_query", {}))
+        args = {**args, "name": name}
         intent = FileWriteIntent(mutation_id=uuid4().hex, run_id=state.run_id,
-                                 path=f"exports/{args['name']}", probe_query=args["probe_query"])
+                                 path=f"exports/{name}", probe_query=query)
         decision = check_file_write(state, intent)
         self._emit(state.run_id, "gate", {"step": state.steps,
                                            **decision.model_dump(mode="json")})
