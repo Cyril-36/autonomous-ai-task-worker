@@ -601,3 +601,112 @@ async def test_task_level_tools_complete_intake_on_either_form_layout(tmp_path, 
         register_server.should_exit = True
         await portal_task
         await register_task
+
+
+@pytest.mark.asyncio
+async def test_unrepairable_failed_verification_ends_failed_not_blocked(tmp_path):
+    class PolicyProbes(FakeProbes):
+        async def register_policy(self):
+            return {"version": 1, "threshold": "100000.00"}
+
+    store = Store(tmp_path / "worker.db")
+    principal = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi",
+                          role="operator")
+    store.create_run("r1", "Register the latest invoice from Larkspur Supplies", principal, "fake")
+    script = [{"tool": "commit_goal", "arguments": {"contract": {
+        "requested_action": "register the latest invoice", "goal_type": "register_invoice",
+        "supplier": "Larkspur Supplies", "selector": "latest"}}},
+              {"tool": "finish", "arguments": {"summary": "Done"}}]
+    script += [{"tool": "update_plan", "arguments": {"steps": ["stuck"]}}] * 8
+    worker = WorkerLoop(store=store, provider=FakeProvider(script), browser=None,
+                        probes=PolicyProbes(), workspace=None,
+                        portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+    await worker.run("r1")
+    assert store.get_run("r1").status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_revise_goal_accepts_the_restated_action(tmp_path):
+    class PolicyProbes(FakeProbes):
+        async def register_policy(self):
+            return {"version": 1, "threshold": "100000.00"}
+
+    store = Store(tmp_path / "worker.db")
+    principal = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi",
+                          role="operator")
+    store.create_run("r1", "Register the latest invoice from Larkspur Supplies", principal, "fake")
+    goal = {"requested_action": "register the latest invoice", "goal_type": "register_invoice",
+            "supplier": "Larkspur Supplies", "selector": "latest", "extra_criteria": [{}]}
+    worker = WorkerLoop(store=store, provider=FakeProvider([
+        {"tool": "commit_goal", "arguments": {"contract": goal}},
+        {"tool": "finish", "arguments": {"summary": "Done"}},
+        {"tool": "revise_goal", "arguments": {"contract": goal}},
+        {"tool": "ask_user", "arguments": {"question": "?"}},
+    ]), browser=None, probes=PolicyProbes(), workspace=None,
+        portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+    await worker.run("r1")
+    revise = [event for event in store.events("r1")
+              if event.type == "step" and event.data["tool"] == "revise_goal"]
+    assert revise and "extra_forbidden" not in revise[0].data["summary"]
+
+
+@pytest.mark.asyncio
+async def test_submit_form_after_an_approval_pause_saves_the_approved_values(tmp_path):
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    principal = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi",
+                          role="operator")
+    browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                         register_url=register_url)
+    cookies = await browser.context.cookies(register_url)
+    session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+    probes = Probes(portal_url=portal_url, register_url=register_url, probe_key="probe-demo",
+                    register_session=session, workspace=tmp_path / "workspace")
+    store = Store(tmp_path / "worker.db")
+    store.create_run("r1", "Register invoice BF-2292 from Brightfen Paper", principal, "fake")
+    script = [
+        {"tool": "commit_goal", "arguments": {"contract": {
+            "requested_action": "register an invoice", "goal_type": "register_invoice",
+            "supplier": "Brightfen Paper", "selector": "invoice_number",
+            "invoice_number": "BF-2292"}}},
+        {"tool": "open_page", "arguments": {"app": "portal", "page": "invoice", "id": "bf-2292"}},
+        {"tool": "record_facts", "arguments": {
+            "labels": ["Invoice number", "Amount", "Due date", "Currency"]}},
+        {"tool": "open_page", "arguments": {"app": "register", "page": "new_invoice"}},
+        {"tool": "fill_form", "arguments": {"fields": [
+            {"label": "Supplier", "fact": "goal.supplier"},
+            {"label": "Invoice number", "fact": "bf-2292.invoice_number"},
+            {"label": "Amount", "fact": "bf-2292.amount"},
+            {"label": "Due date", "fact": "bf-2292.due_date"},
+            {"label": "Currency", "fact": "bf-2292.currency"},
+            {"label": "Source document", "fact": "bf-2292.document_id"},
+        ]}},
+        {"tool": "submit_form"},
+        {"tool": "submit_form"},
+        {"tool": "finish", "arguments": {"summary": "Done"}},
+    ]
+    try:
+        worker = WorkerLoop(store=store, provider=FakeProvider(script), browser=browser,
+                            probes=probes, workspace=WorkspaceFiles(tmp_path / "workspace"),
+                            portal_url=portal_url, register_url=register_url)
+        await worker.run("r1")
+        assert store.get_run("r1").status == "awaiting_approval"
+        approved = decide_approval(Approval.model_validate(store.approvals("r1")[0]), "approve",
+                                   "ravi@example.com")
+        store.save_approval(approved.approval_id, "r1", approved.model_dump(mode="json"))
+        await worker.run("r1")
+        steps = [(event.data["tool"], event.data["summary"]) for event in store.events("r1")
+                 if event.type == "step"]
+        assert store.get_run("r1").status == "completed", steps
+        with connect(tmp_path / "register.db") as db:
+            assert db.execute("SELECT COUNT(*) FROM invoices WHERE invoice_number='BF-2292'"
+                              ).fetchone()[0] == 1
+    finally:
+        await probes.close()
+        await browser.close()
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task

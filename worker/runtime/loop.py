@@ -267,8 +267,13 @@ class WorkerLoop:
                 if signal == "reflect":
                     state.observations_text.append("Reflect on the stalled plan and choose a new action.")
                 elif signal == "ask_user":
-                    self._terminal(state, RunStatus.blocked,
-                                   "The worker could not make progress without clarification.")
+                    if state.verify_rounds:
+                        # verification already failed and the worker cannot repair it
+                        self._terminal(state, RunStatus.failed, state.last_verification or
+                                       "Verification failed and the worker could not repair it.")
+                    else:
+                        self._terminal(state, RunStatus.blocked,
+                                       "The worker could not make progress without clarification.")
                     return
                 if state.steps >= max_steps:
                     break
@@ -298,7 +303,8 @@ class WorkerLoop:
         if name == "fill_form":
             return await self._fill_form(state, args["fields"])
         if name == "submit_form":
-            observation = self.browser.current or await self._observe(state)
+            # always re-read: after a pause (approval, answer) the old view of the page is stale
+            observation = await self._observe(state)
             submits = [item for item in observation.elements if item.submits_form]
             if len(submits) != 1:
                 return {"ok": False, "summary": "This page has no single form to submit."}
@@ -411,7 +417,10 @@ class WorkerLoop:
         if name == "revise_goal":
             if not state.contract:
                 raise ValueError("No goal to revise")
-            revised = revise_goal(state.contract, GoalProposal.model_validate(args["contract"]),
+            raw = {key: value for key, value in args["contract"].items()
+                   if key != "requested_action"}
+            raw["extra_criteria"] = [item for item in raw.get("extra_criteria", []) if item]
+            revised = revise_goal(state.contract, GoalProposal.model_validate(raw),
                                   wrote_business_data=state.wrote_business_data)
             if isinstance(revised, GoalRejection):
                 return {"ok": False, "summary": revised.reason}
@@ -448,6 +457,7 @@ class WorkerLoop:
                 self._terminal(state, result.status, result.summary)
                 return {"ok": True, "summary": result.summary, "terminal": True}
             state.verify_rounds += 1
+            state.last_verification = result.summary
             if state.verify_rounds > 2:
                 self._terminal(state, RunStatus.failed, result.summary)
                 return {"ok": False, "summary": result.summary, "terminal": True}

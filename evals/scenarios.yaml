@@ -159,7 +159,7 @@ scenarios:
     request: Export invoices due before 2026-11-01
     due_before: 2026-11-01
     expected_status: completed
-    expected_export: due.csv
+    expected_export: any  # the request names no file
   - id: unsupported_payment
     kind: unsupported
     principal: ravi

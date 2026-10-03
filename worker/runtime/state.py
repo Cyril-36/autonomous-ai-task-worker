@@ -32,6 +32,7 @@ class RuntimeState:
     wrote_business_data: bool = False
     export_path: str | None = None
     verify_rounds: int = 0
+    last_verification: str | None = None
 
 
 def save_state(path: Path | str, state: RuntimeState) -> None:
@@ -52,6 +53,7 @@ def save_state(path: Path | str, state: RuntimeState) -> None:
         "feedback": state.feedback, "steps": state.steps,
         "wrote_business_data": state.wrote_business_data,
         "export_path": state.export_path, "verify_rounds": state.verify_rounds,
+        "last_verification": state.last_verification,
     }
     with sqlite3.connect(path) as db:
         db.execute("CREATE TABLE IF NOT EXISTS runtime_states ("
@@ -91,4 +93,5 @@ def load_state(path: Path | str, run_id: str) -> RuntimeState | None:
     state.wrote_business_data = raw["wrote_business_data"]
     state.export_path = raw["export_path"]
     state.verify_rounds = raw["verify_rounds"]
+    state.last_verification = raw.get("last_verification")
     return state
