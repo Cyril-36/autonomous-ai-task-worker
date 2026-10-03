@@ -154,6 +154,12 @@ def create_app(
         probe_authorized(x_probe_key)
         return rows("invoices", "WHERE supplier_id=?" if supplier_id else "", (supplier_id,) if supplier_id else ())
 
+    @app.get("/api/messages")
+    def probe_messages(supplier_id: str | None = None, x_probe_key: str | None = Header(None)):
+        probe_authorized(x_probe_key)
+        return rows("messages", "WHERE supplier_id=?" if supplier_id else "",
+                    (supplier_id,) if supplier_id else ())
+
     @app.get("/api/documents/{doc_id}")
     def probe_document(doc_id: str, x_probe_key: str | None = Header(None)):
         probe_authorized(x_probe_key)

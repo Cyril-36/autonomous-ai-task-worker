@@ -50,6 +50,9 @@ class Probes:
     async def portal_invoices(self, supplier_id: str | None = None):
         return await self._portal("/api/invoices", {"supplier_id": supplier_id} if supplier_id else None)
 
+    async def portal_messages(self, supplier_id: str | None = None):
+        return await self._portal("/api/messages", {"supplier_id": supplier_id} if supplier_id else None)
+
     async def portal_document(self, doc_id: str):
         return await self._portal(f"/api/documents/{doc_id}")
 

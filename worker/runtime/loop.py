@@ -18,6 +18,7 @@ from worker.contracts import (
     FileWriteIntent,
     FillSource,
     GoalProposal,
+    GoalType,
     MutationIntent,
     NetworkAllowance,
     RunStatus,
@@ -366,14 +367,19 @@ class WorkerLoop:
         if name == "commit_goal":
             if state.phase != "discover":
                 raise ValueError("Goal can only be committed during discovery")
-            try:
-                proposal = GoalProposal.model_validate(args["contract"])
-            except ValueError:
+            raw = {key: value for key, value in args["contract"].items()
+                   if key != "requested_action"}
+            raw["extra_criteria"] = [item for item in raw.get("extra_criteria", []) if item]
+            if raw.get("goal_type") not in {goal.value for goal in GoalType}:
                 self._emit(state.run_id, "contract", {"action": "rejected",
                                                        "reason": "Unsupported task type"})
                 self._terminal(state, RunStatus.unsupported,
                                "The request does not fit a supported task type.")
                 return {"ok": False, "summary": "Unsupported task", "terminal": True}
+            try:
+                proposal = GoalProposal.model_validate(raw)
+            except ValueError as exc:
+                return {"ok": False, "summary": "The goal is malformed: " + str(exc)[:300]}
             contract = await commit_goal(proposal, "\n".join(state.user_messages), self.probes,
                                          run_id=state.run_id)
             if isinstance(contract, GoalRejection):
@@ -386,7 +392,10 @@ class WorkerLoop:
                 if contract.code == "unsupported":
                     self._terminal(state, RunStatus.unsupported, contract.reason)
                     return {"ok": False, "summary": contract.reason, "terminal": True}
-                return {"ok": False, "summary": contract.reason}
+                return {"ok": False, "summary": (
+                    f"Goal rejected: {contract.reason}. Fix the goal from what the request says "
+                    "and commit again. Ask the user only if the request does not say it; if "
+                    "the user asked for a different kind of action, call unsupported.")}
             state.contract = contract
             state.source_values = next((item.params["source_values"]
                                         for item in contract.obligations

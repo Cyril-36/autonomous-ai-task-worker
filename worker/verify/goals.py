@@ -228,12 +228,24 @@ async def commit_goal(
         ])
 
     elif proposal.goal_type == GoalType.update_supplier_contact:
-        if not proposal.source_doc_id:
-            return GoalRejection("request_mismatch", "Contact update needs a source message")
-        try:
-            message = await probes.portal_document(proposal.source_doc_id)
-        except (LookupError, KeyError):
-            return GoalRejection("blocked", "Source message not found")
+        if proposal.source_doc_id:
+            try:
+                message = await probes.portal_document(proposal.source_doc_id)
+            except (LookupError, KeyError):
+                return GoalRejection("blocked", "Source message not found")
+        else:
+            # like "latest" for invoices: code resolves the supplier's most recent contact message
+            messages = [row for row in await probes.portal_messages(supplier_id)
+                        if row.get("contact_name") or row.get("contact_email")]
+            if not messages:
+                return GoalRejection("blocked", "The supplier has sent no contact details on "
+                                                "the portal")
+            newest = max(row["date"] for row in messages)
+            latest = [row for row in messages if row["date"] == newest]
+            if len(latest) > 1:
+                return GoalRejection("needs_clarification", "Several contact messages share the "
+                                     "latest date", [row["doc_id"] for row in latest])
+            message = latest[0]
         if message["supplier_id"] != supplier_id or "contact_name" not in message:
             return GoalRejection("source_mismatch", "Message does not belong to supplier")
         sources = [_source(message, "message")]

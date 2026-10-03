@@ -59,7 +59,8 @@ DESCRIPTIONS = {
     "revise_goal": "Change the locked goal after a failed verification. Changes to supplier, "
                    "documents, numbers or filters need the user's confirmation.",
     "ask_user": "Ask the user one clear question when the request or evidence is ambiguous.",
-    "unsupported": "End a request outside the supported goal types, with a plain-language reason.",
+    "unsupported": "End the run when the action the user asked for is not one of the supported "
+                   "goal types, with a plain-language reason.",
     "finish": "Request independent verification once the work is done. Does not declare success.",
 }
 
@@ -74,6 +75,9 @@ FIELD_ITEM = {
 GOAL_SCHEMA = {
     "type": "object",
     "properties": {
+        "requested_action": {"type": "string", "description":
+                             "The action the user asked for, restated in a few words, "
+                             "before choosing goal_type"},
         "goal_type": {"type": "string", "enum": [
             "register_invoice", "check_or_register_invoice", "register_batch",
             "update_supplier_contact", "export_invoices",
@@ -88,7 +92,7 @@ GOAL_SCHEMA = {
         "due_before": {"type": "string", "format": "date"},
         "extra_criteria": {"type": "array", "items": {"type": "object"}},
     },
-    "required": ["goal_type"],
+    "required": ["requested_action", "goal_type"],
     "additionalProperties": False,
 }
 

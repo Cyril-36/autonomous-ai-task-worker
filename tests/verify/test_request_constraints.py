@@ -31,3 +31,52 @@ def test_numbers_in_reads_digits_and_words(text, value):
 
 def test_numbers_in_does_not_invent_numbers():
     assert numbers_in("record every invoice we have not entered") == set()
+
+
+class _MessageProbes:
+    def __init__(self, messages):
+        self.messages = messages
+
+    async def register_suppliers(self):
+        return [{"id": "kestrova-components", "name": "Kestrova Components", "aliases": ""}]
+
+    async def portal_messages(self, supplier_id=None):
+        return [row for row in self.messages if row["supplier_id"] == supplier_id]
+
+    async def register_supplier(self, supplier_id):
+        return {"id": supplier_id, "remittance_email": "old@kestrova.example.com"}
+
+    async def portal_document(self, doc_id):
+        return next(row for row in self.messages if row["doc_id"] == doc_id)
+
+
+def _message(doc_id, day):
+    return {"doc_id": doc_id, "revision": "1", "supplier_id": "kestrova-components",
+            "date": day, "contact_name": "Arun Das", "contact_email": "a@kestrova.example.com",
+            "remittance_email": "pay@kestrova.example.com"}
+
+
+@pytest.mark.asyncio
+async def test_contact_update_resolves_the_suppliers_latest_message_by_code():
+    from worker.verify.goals import GoalRejection, commit_goal
+    probes = _MessageProbes([_message("msg-old", "2026-09-01"), _message("msg-new", "2026-10-02")])
+    contract = await commit_goal({"goal_type": "update_supplier_contact",
+                                  "supplier": "Kestrova Components"},
+                                 "Kestrova Components sent new contact details", probes, run_id="r")
+    assert not isinstance(contract, GoalRejection)
+    assert [source.doc_id for source in contract.sources] == ["msg-new"]
+    tied = _MessageProbes([_message("a", "2026-10-02"), _message("b", "2026-10-02")])
+    rejection = await commit_goal({"goal_type": "update_supplier_contact",
+                                   "supplier": "Kestrova Components"},
+                                  "Kestrova Components sent new contact details", tied, run_id="r")
+    assert rejection.code == "needs_clarification" and set(rejection.candidates) == {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_latest_request_cannot_carry_a_number_the_user_never_gave():
+    from worker.verify.goals import commit_goal
+    rejection = await commit_goal({"goal_type": "register_invoice", "supplier": "Kestrova Components",
+                                   "invoice_number": "KC-703"},
+                                  "Enter Kestrova Components' newest invoice",
+                                  _MessageProbes([]), run_id="r")
+    assert rejection.code == "request_mismatch"
