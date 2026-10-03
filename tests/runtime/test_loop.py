@@ -823,3 +823,29 @@ async def test_failed_save_and_empty_form_explain_what_to_do(tmp_path):
         register_server.should_exit = True
         await portal_task
         await register_task
+
+
+@pytest.mark.asyncio
+async def test_unclear_action_is_confirmed_by_the_user_before_the_goal_locks(tmp_path):
+    class ProbesWithPolicy(FakeProbes):
+        async def register_policy(self):
+            return {"version": 1, "threshold": "100000.00"}
+
+    store = Store(tmp_path / "worker.db")
+    ravi = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi", role="operator")
+    store.create_run("r1", "Record a refund for Larkspur Supplies' latest invoice", ravi, "fake")
+    goal = {"tool": "commit_goal", "arguments": {"contract": {
+        "requested_action": "record", "goal_type": "register_invoice",
+        "supplier": "Larkspur Supplies", "selector": "latest"}}}
+    worker = WorkerLoop(store=store, provider=FakeProvider([goal, goal]), browser=None,
+                        probes=ProbesWithPolicy(), workspace=None,
+                        portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+    await worker.run("r1")
+    question = [event.data for event in store.events("r1") if event.type == "question"][-1]
+    assert store.get_run("r1").status == "awaiting_input"
+    assert question["candidates"] == ["Yes, register the invoice", "No"]
+    assert not any(event.type == "contract" and event.data["action"] == "committed"
+                   for event in store.events("r1"))
+    await worker.run("r1", answer="Yes, register the invoice")
+    assert any(event.type == "contract" and event.data["action"] == "committed"
+               for event in store.events("r1"))

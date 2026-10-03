@@ -365,6 +365,9 @@ class WorkerLoop:
                                                        "reason": contract.reason})
                 # only real ambiguity goes to the user; a goal missing something the
                 # request contains goes back to the model to fix
+                if contract.code == "needs_confirmation":
+                    # code, not the model, asks: no write until the request is clear
+                    return self._question(state, contract.reason, contract.candidates)
                 if contract.code == "needs_clarification" and contract.candidates:
                     return self._question(state, contract.reason, contract.candidates,
                                           about=proposal.supplier)

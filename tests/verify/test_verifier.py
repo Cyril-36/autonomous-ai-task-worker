@@ -12,7 +12,7 @@ async def test_wrong_field_and_duplicate_prevent_completion():
     probes = FakeProbes()
     proposal = GoalProposal(goal_type=GoalType.register_invoice, supplier="Larkspur Supplies",
                             selector="latest")
-    contract = await commit_goal(proposal, "Register latest from Larkspur Supplies", probes,
+    contract = await commit_goal(proposal, "Register the latest invoice from Larkspur Supplies", probes,
                                  run_id="r1")
     probes.registered = [{**probes.documents[1], "id": 4, "due_date": "2026-11-02"}]
     result = await verify(contract, probes)
@@ -71,7 +71,7 @@ async def test_invalid_saved_amount_is_a_failed_check_not_a_crash():
     probes = FakeProbes()
     proposal = GoalProposal(goal_type=GoalType.register_invoice, supplier="Larkspur Supplies",
                             selector="latest")
-    contract = await commit_goal(proposal, "Register latest from Larkspur Supplies", probes,
+    contract = await commit_goal(proposal, "Register the latest invoice from Larkspur Supplies", probes,
                                  run_id="r1")
     probes.registered = [{**probes.documents[1], "amount": "garbled"}]
     result = await verify(contract, probes)
@@ -86,7 +86,7 @@ async def test_extra_registered_probe_adds_a_real_check():
                                 probe="register_invoice",
                                 where={"supplier_id": "larkspur-supplies", "invoice_number": "LS-1042"},
                                 expect={"amount": "48250.00"})])
-    contract = await commit_goal(proposal, "Register latest from Larkspur Supplies", probes,
+    contract = await commit_goal(proposal, "Register the latest invoice from Larkspur Supplies", probes,
                                  run_id="r1")
     probes.registered = [dict(probes.documents[1])]
     assert (await verify(contract, probes)).status == "completed"

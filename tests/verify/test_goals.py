@@ -44,12 +44,12 @@ async def test_ambiguous_supplier_and_tied_latest_ask_user():
     probes = FakeProbes()
     proposal = GoalProposal(goal_type=GoalType.register_invoice, supplier="Larkspur",
                             selector="latest")
-    result = await commit_goal(proposal, "Register latest from Larkspur", probes, run_id="r1")
+    result = await commit_goal(proposal, "Register the latest invoice from Larkspur", probes, run_id="r1")
     assert result.code == "needs_clarification"
     assert len(result.candidates) == 2
     probes.documents[0]["issue_date"] = probes.documents[1]["issue_date"]
     exact = proposal.model_copy(update={"supplier": "Larkspur Supplies"})
-    result = await commit_goal(exact, "Register latest from Larkspur Supplies", probes, run_id="r1")
+    result = await commit_goal(exact, "Register the latest invoice from Larkspur Supplies", probes, run_id="r1")
     assert result.code == "needs_clarification"
 
 
@@ -59,7 +59,7 @@ async def test_number_must_appear_in_request_and_batch_set_is_frozen():
     number = GoalProposal(goal_type=GoalType.check_or_register_invoice,
                           supplier="Larkspur Supplies", selector="invoice_number",
                           invoice_number="LS-1042")
-    assert (await commit_goal(number, "Check Larkspur Supplies", probes,
+    assert (await commit_goal(number, "Check Larkspur Supplies and add the invoice if missing", probes,
                               run_id="r1")).code == "request_mismatch"
     batch = GoalProposal(goal_type=GoalType.register_batch, supplier="Larkspur Supplies",
                          selector="all_unregistered", max_count=1)
@@ -76,7 +76,7 @@ async def test_material_revision_requires_confirmation():
     probes = FakeProbes()
     initial = GoalProposal(goal_type=GoalType.register_invoice, supplier="Larkspur Supplies",
                            selector="latest")
-    contract = await commit_goal(initial, "Register latest from Larkspur Supplies", probes,
+    contract = await commit_goal(initial, "Register the latest invoice from Larkspur Supplies", probes,
                                  run_id="r1")
     revised = initial.model_copy(update={"selector": "invoice_number", "invoice_number": "LS-1042"})
     assert revise_goal(contract, revised, wrote_business_data=False).code == "confirmation_required"
@@ -89,12 +89,12 @@ async def test_extra_criterion_must_have_registered_probe():
     proposal = GoalProposal(goal_type=GoalType.register_invoice, supplier="Larkspur Supplies",
                             selector="latest", extra_criteria=[Criterion(
                                 probe="unknown", where={}, expect={"x": "y"})])
-    result = await commit_goal(proposal, "Register latest from Larkspur Supplies", probes,
+    result = await commit_goal(proposal, "Register the latest invoice from Larkspur Supplies", probes,
                                run_id="r1")
     assert result.code == "unsupported"
     original = GoalProposal(goal_type=GoalType.register_invoice, supplier="Larkspur Supplies",
                             selector="latest")
-    contract = await commit_goal(original, "Register latest from Larkspur Supplies", probes,
+    contract = await commit_goal(original, "Register the latest invoice from Larkspur Supplies", probes,
                                  run_id="r1")
     assert revise_goal(contract, proposal, wrote_business_data=False).code == "unsupported"
 
@@ -108,7 +108,7 @@ async def test_source_revision_change_during_commit_is_refused():
 
     proposal = GoalProposal(goal_type=GoalType.register_invoice, supplier="Larkspur Supplies",
                             selector="latest")
-    result = await commit_goal(proposal, "Register latest from Larkspur Supplies",
+    result = await commit_goal(proposal, "Register the latest invoice from Larkspur Supplies",
                                ChangingProbes(), run_id="r1")
     assert result.code == "source_mismatch"
 

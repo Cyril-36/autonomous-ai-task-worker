@@ -16,7 +16,7 @@ Reference date: 2026-10-03; seed: 7
 | Unexpected writes | 0/31 |
 | Duplicate records | 0/31 |
 | Tool calls | 100/31 runs |
-| Latency | 10.22 s/31 runs |
+| Latency | 10.43 s/31 runs |
 | Settled cost | ₹0.000000/31 scenarios |
 
 ## Scenarios

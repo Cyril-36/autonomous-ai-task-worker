@@ -80,25 +80,99 @@ DATE_PATTERN = re.compile(
     r"|\d{1,2}[/-]\d{1,2}[/-]\d{4}")                         # 15/11/2026, day first
 
 
-# The actions each goal type carries out, as people phrase them. A goal is only accepted when
-# the user's own request asks for that kind of action, so a request for something else (a
-# refund, a payment, a deletion) cannot become a write. This is a lexical check: it can refuse
-# an unusual phrasing (the worker then asks or declines), but it cannot invent a write.
-_PUT_IN = r"\b(?:in|into|to)\s+(?:our\s+|the\s+)?(?:register|books)\b"
-_RECORD = (r"(?:^|[.;:!?]\s*|\b(?:and|or|please|then|,)\s+)register\b"
-           r"|\b(?:enter|record|log|add|put|file|book|input|capture|insert)\w*\b|" + _PUT_IN)
-GOAL_ACTIONS: dict[GoalType, str] = {
-    GoalType.register_invoice: _RECORD,
-    # it may write when the invoice is missing, so the request must ask for that too
-    GoalType.check_or_register_invoice: _RECORD,
-    GoalType.register_batch: _RECORD + r"|\b(?:up to date|catch up)\b",
-    GoalType.update_supplier_contact: r"\b(?:update|change|replace|correct|match|sync)\w*\b",
-    GoalType.export_invoices: r"\b(?:export|csv|spreadsheet|download|excel)\w*\b",
+# Does the user's own request ask for the action a goal type carries out?
+#
+# Three answers: "clear" (an action of this goal on this goal's kind of object, not negated),
+# "none" (no such action, or only negated ones) and "unclear" (the action word is there but aimed
+# at something else, or the request only asks to check). Code refuses "none" and asks the user to
+# confirm "unclear", so a request for something else (a refund, a payment, a deletion) cannot
+# become a write. It is a lexical check with known limits, which is why its doubt goes to a person.
+_TOKEN = re.compile(r"[A-Za-z]{2}-\d+|[A-Za-z]+(?:'[a-z]+)?|\d+|[.;:!?]")
+_NEGATION = {"not", "don't", "dont", "never", "without", "avoid", "stop", "no", "haven't",
+             "hasn't", "didn't", "isn't", "aren't", "shouldn't", "won't"}
+_FILLER = {"a", "an", "the", "their", "its", "our", "your", "this", "that", "these", "those",
+           "any", "all", "every", "each", "up", "to", "of", "latest", "newest", "most",
+           "recent", "last", "new", "unregistered", "missing", "outstanding", "next", "first",
+           "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+           "please", "back"}
+_DETERMINERS = {"a", "an", "the", "their", "its", "our", "your", "this", "that", "on", "from"}
+_INVOICE_OBJECT = re.compile(r"^(?:invoices?|bills?|it|them|[a-z]{2}-\d+)$")
+_RECORD_VERB = re.compile(r"^(?:register|enter|record|log|add|put|file|book|input|capture|"
+                          r"insert)(?:s|ed|ing)?$")
+_GOAL_RULES: dict[GoalType, dict] = {
+    GoalType.register_invoice: {"verb": _RECORD_VERB, "object": _INVOICE_OBJECT},
+    GoalType.register_batch: {"verb": _RECORD_VERB, "object": _INVOICE_OBJECT},
+    # it writes when the invoice is missing, so a check alone is not enough
+    GoalType.check_or_register_invoice: {"verb": _RECORD_VERB, "object": _INVOICE_OBJECT,
+                                         "unclear": re.compile(r"^(?:already|check|have)$")},
+    GoalType.update_supplier_contact: {
+        "verb": re.compile(r"^(?:update|change|replace|correct|match|sync)(?:s|ed|ing)?$"),
+        "sentence_object": re.compile(r"^(?:contacts?|details|record|directory|remittance|"
+                                      r"emails?|supplier)$")},
+    GoalType.export_invoices: {"verb": re.compile(r"^(?:export|csv|spreadsheet|download|excel)"
+                                                  r"(?:s|ed|ing)?$"), "self_object": True},
+}
+CONFIRM_ACTION: dict[GoalType, str] = {
+    GoalType.register_invoice: "register the invoice",
+    GoalType.check_or_register_invoice: "check it and register the invoice if it is missing",
+    GoalType.register_batch: "record the invoices",
+    GoalType.update_supplier_contact: "update the supplier contact details",
+    GoalType.export_invoices: "export the invoices",
 }
 
 
+def _sentences(request: str) -> list[list[str]]:
+    sentences, current = [], []
+    for token in _TOKEN.findall(request):
+        if token in ".;:!?":
+            if current:
+                sentences.append(current)
+            current = []
+        else:
+            current.append(token)
+    return sentences + ([current] if current else [])
+
+
+def action_evidence(goal_type: GoalType, request: str) -> str:
+    rule = _GOAL_RULES[goal_type]
+    unclear = False
+    for sentence in _sentences(request):
+        lower = [token.casefold() for token in sentence]
+        for index, word in enumerate(lower):
+            if rule.get("unclear") and rule["unclear"].match(word):
+                unclear = True
+            if not rule["verb"].match(word):
+                continue
+            if index and lower[index - 1] in _DETERMINERS and not rule.get("self_object"):
+                continue  # "the register", "on file": a noun, not an action
+            if _NEGATION & set(lower[max(0, index - 3):index]):
+                continue
+            if rule.get("self_object"):
+                return "clear"
+            if rule.get("sentence_object") and any(rule["sentence_object"].match(item)
+                                                    for item in lower):
+                return "clear"
+            if "object" in rule:
+                for token, item in zip(sentence[index + 1:index + 8], lower[index + 1:index + 8]):
+                    if rule["object"].match(item):
+                        return "clear"
+                    if item in _FILLER or token[:1].isupper() or item.isdigit():
+                        continue
+                    break
+            unclear = True
+        if "object" in rule:
+            # passive phrasing: "the newest invoice ... needs to go into the register"
+            text = " ".join(lower)
+            for match in re.finditer(r"\b(?:in|into|to) (?:our |the )?(?:register|books)\b", text):
+                before = text[:match.start()].split()
+                if (any(rule["object"].match(item) for item in before)
+                        and not _NEGATION & set(before[-4:])):
+                    return "clear"
+    return "unclear" if unclear else "none"
+
+
 def action_matches(goal_type: GoalType, request: str) -> bool:
-    return re.search(GOAL_ACTIONS[goal_type], request.casefold()) is not None
+    return action_evidence(goal_type, request) == "clear"
 
 
 def numbers_in(request: str) -> set[int]:
@@ -134,11 +208,16 @@ async def commit_goal(
         except ValueError:
             return GoalRejection("unsupported", "Request does not fit a supported goal type")
     request = request_text.casefold()
-    if not action_matches(proposal.goal_type, request_text):
+    evidence = action_evidence(proposal.goal_type, request_text)
+    if evidence == "none":
         return GoalRejection("request_mismatch",
-                             f"The request does not ask to {proposal.goal_type.value.replace('_', ' ')}"
+                             f"The request does not ask to {CONFIRM_ACTION[proposal.goal_type]}"
                              "; if the user wants a different kind of action, call unsupported, "
                              "and if it is unclear, ask the user")
+    if evidence == "unclear":
+        return GoalRejection("needs_confirmation",
+                             f"The request does not clearly ask to {CONFIRM_ACTION[proposal.goal_type]}",
+                             [f"Yes, {CONFIRM_ACTION[proposal.goal_type]}", "No"])
     suppliers = await probes.register_suppliers()
     supplier = None
     if proposal.supplier:

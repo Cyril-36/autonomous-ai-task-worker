@@ -29,9 +29,11 @@ scenarios:
   - {id: u_check_missing, kind: understanding, principal: meera,
      request: "Is KC-702 from Kestrova Components in the register yet? Add it if it isn't.",
      expect: {outcome: committed, goal_type: check_or_register_invoice, supplier: Kestrova Components, invoice_number: KC-702}}
+  # Policy change (2026-10-04, after review): this request only asks to check, and the
+  # check-then-register goal can write, so code asks the user to confirm before any write.
   - {id: u_check_duplicate, kind: understanding, principal: ravi,
      request: "Do we already have BF-2291 on file from Brightfen Paper? Don't create a duplicate.",
-     expect: {outcome: committed, goal_type: check_or_register_invoice, supplier: Brightfen Paper, invoice_number: BF-2291}}
+     expect: {outcome: question}}
   - {id: u_batch_cap_words, kind: understanding, principal: meera,
      request: "Record every Kestrova Components invoice we haven't entered yet, but no more than 2.",
      expect: {outcome: committed, goal_type: register_batch, supplier: Kestrova Components, max_count: 2}}
