@@ -15,6 +15,8 @@ class DurableQueue:
         self.queue: asyncio.Queue[tuple[str, str | None] | None] = asyncio.Queue()
         self.task: asyncio.Task | None = None
         self.queued: set[str] = set()
+        self.current_run: str | None = None
+        self.current_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         if self.task and not self.task.done():
@@ -40,9 +42,20 @@ class DurableQueue:
 
     async def stop(self) -> None:
         if self.task:
+            if self.current_task and not self.current_task.done():
+                self.current_task.cancel()
+                if self.current_run and self.store.get_run(self.current_run).status == RunStatus.running:
+                    self.store.update_run(self.current_run, status="interrupted")
+                    self.store.append_event(self.current_run, "run_status", {
+                        "status": "interrupted", "reason": "The worker shut down during this run.",
+                    })
             await self.queue.put(None)
             await self.task
             self.task = None
+
+    def cancel(self, run_id: str) -> None:
+        if self.current_run == run_id and self.current_task and not self.current_task.done():
+            self.current_task.cancel()
 
     async def _work(self) -> None:
         while True:
@@ -52,7 +65,11 @@ class DurableQueue:
                 break
             run_id, answer = item
             try:
-                await self.runner(run_id, answer)
+                self.current_run = run_id
+                self.current_task = asyncio.create_task(self.runner(run_id, answer))
+                await self.current_task
+            except asyncio.CancelledError:
+                pass
             except Exception as exc:  # noqa: BLE001 - isolate one failed run from the queue
                 self.store.update_run(run_id, status="failed", phase="done")
                 self.store.append_event(run_id, "error", {
@@ -62,5 +79,7 @@ class DurableQueue:
                     "status": "failed", "reason": "The worker stopped because of an internal error.",
                 })
             finally:
+                self.current_task = None
+                self.current_run = None
                 self.queued.discard(run_id)
                 self.queue.task_done()

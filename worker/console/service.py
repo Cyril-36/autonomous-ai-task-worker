@@ -19,10 +19,13 @@ from worker.store import Store, utc_now
 
 
 class RunService:
-    def __init__(self, store: Store, *, model: str = "replay", engine: str = "replay"):
+    def __init__(self, store: Store, *, model: str = "replay", engine: str = "replay",
+                 queue=None, ledger=None):
         self.store = store
         self.model = model
         self.engine = engine
+        self.queue = queue
+        self.ledger = ledger
 
     def _visible(self, run_id: str, principal: Principal):
         run = self.store.get_run(run_id)
@@ -41,6 +44,10 @@ class RunService:
     def submit(self, principal: Principal, request: str):
         if not 1 <= len(request.strip()) <= 2000:
             raise HTTPException(422, detail=("invalid_request", "Request must be 1–2000 characters"))
+        if (self.engine == "live" and self.ledger and
+                self.ledger.spent() >= self.ledger.pricing.global_limit_inr):
+            raise HTTPException(402, detail=("budget_exhausted",
+                                             "The estimated local spending limit is exhausted"))
         run_id = uuid4().hex
         self.store.create_run(run_id, request.strip(), principal, self.model)
         self.store.append_event(run_id, "run_status", {
@@ -48,6 +55,8 @@ class RunService:
         })
         if self.engine == "replay":
             self._replay(run_id, request.strip())
+        elif self.queue:
+            self.queue.enqueue(run_id)
         return self.store.get_run(run_id)
 
     def _replay(self, run_id: str, request: str) -> None:
@@ -112,6 +121,23 @@ class RunService:
 
     def budget(self, run_id: str | None = None) -> dict:
         pricing = load_pricing()
+        if self.ledger:
+            entries = self.ledger.entries()
+            global_spent = sum((item.settled_inr if item.settled_inr is not None
+                                else item.reserved_inr
+                                for item in entries if item.state != "reserved"),
+                               start=pricing.global_limit_inr * 0)
+            global_reserved = sum((item.reserved_inr for item in entries
+                                   if item.state == "reserved"), start=pricing.global_limit_inr * 0)
+            budget = {
+                "global_spent_inr": f"{global_spent:.2f}",
+                "global_reserved_inr": f"{global_reserved:.2f}",
+                "global_limit_inr": f"{pricing.global_limit_inr:.2f}", "estimated": True,
+            }
+            if run_id:
+                budget.update({"run_spent_inr": f"{self.ledger.spent(run_id):.2f}",
+                               "run_limit_inr": f"{pricing.run_limit_inr:.2f}"})
+            return budget
         budget = {
             "global_spent_inr": "0.00", "global_reserved_inr": "0.00",
             "global_limit_inr": f"{pricing.global_limit_inr:.2f}", "estimated": True,
@@ -156,7 +182,10 @@ class RunService:
         self.store.append_event(run_id, "answer", {
             "question_id": question["question_id"], "text": text.strip(), "by": principal.email,
         })
-        self._end_replay(run_id)
+        if self.engine == "replay":
+            self._end_replay(run_id)
+        elif self.queue:
+            self.queue.enqueue(run_id, text.strip())
 
     def decide(self, run_id: str, approval_id: str, principal: Principal,
                decision: str, note: str | None = None) -> dict:
@@ -180,12 +209,14 @@ class RunService:
         payload = updated.model_dump(mode="json")
         self.store.save_approval(approval_id, run_id, payload)
         self.store.append_event(run_id, "approval", payload)
-        if decision == "approve":
+        if self.engine == "live" and self.queue:
+            self.queue.enqueue(run_id)
+        elif decision == "approve":
             self._end_replay(run_id)
         else:
             self.store.update_run(run_id, status="blocked", phase="done")
             self.store.append_event(run_id, "run_status", {
-                "status": "blocked", "reason": "approval_rejected",
+                "status": "blocked", "reason": "The requested change was rejected. Nothing was saved.",
             })
         return payload
 
@@ -194,6 +225,8 @@ class RunService:
         if run.status in TERMINAL_STATUSES:
             raise HTTPException(409, detail=("conflict", "Run already ended"))
         self.store.update_run(run_id, status="failed", phase="done")
+        if self.engine == "live" and self.queue:
+            self.queue.cancel(run_id)
         self.store.append_event(run_id, "run_status", {
             "status": "failed", "reason": "You stopped this run.",
         })

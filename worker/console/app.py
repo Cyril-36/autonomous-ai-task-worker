@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -13,20 +14,38 @@ from worker.config import ROOT, Settings
 from worker.console.auth import DemoAuth
 from worker.console.service import RunService
 from worker.contracts import TERMINAL_STATUSES
+from worker.runtime.queue import DurableQueue
+from worker.runtime.runner import LiveRunner
 from worker.store import Store
 
 
 def create_app(
     db_path: Path | str | None = None, *, passwords: dict[str, str] | None = None,
-    engine: str | None = None,
+    engine: str | None = None, runner=None,
 ) -> FastAPI:
     settings = Settings.from_env()
     store = Store(db_path or settings.data_dir / "worker.db")
     auth = DemoAuth(passwords)
+    selected_engine = engine or settings.engine
+    live_runner = LiveRunner(store, settings) if selected_engine == "live" and runner is None else None
+    queue = DurableQueue(store, runner or live_runner) if selected_engine == "live" else None
     service = RunService(store, model=settings.model if (engine or settings.engine) == "live" else "replay",
-                         engine=engine or settings.engine)
-    app = FastAPI(title="CentrAlign task worker console API")
+                         engine=selected_engine, queue=queue,
+                         ledger=live_runner.ledger if live_runner else None)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if queue:
+            await queue.start()
+        yield
+        if queue:
+            await queue.stop()
+        if live_runner:
+            await live_runner.close()
+
+    app = FastAPI(title="CentrAlign task worker console API", lifespan=lifespan)
     app.state.service = service
+    app.state.queue = queue
 
     @app.exception_handler(HTTPException)
     async def http_error(_request: Request, exc: HTTPException):
@@ -175,10 +194,14 @@ def create_app(
         service._visible(run_id, auth.current(request))
         if Path(name).name != name or not name.endswith(".png"):
             raise HTTPException(404, detail=("not_found", "Artifact not found"))
-        file = settings.data_dir / "artifacts" / run_id / name
+        file = store.path.parent / "artifacts" / run_id / name
         if not file.is_file():
             raise HTTPException(404, detail=("not_found", "Artifact not found"))
         return FileResponse(file, media_type="image/png")
+
+    @app.api_route("/api/{full_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    def unknown_api(full_path: str):
+        raise HTTPException(404, detail=("not_found", "API route not found"))
 
     frontend = ROOT / "console" / "dist"
     if frontend.is_dir():
