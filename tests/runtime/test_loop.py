@@ -710,3 +710,41 @@ async def test_submit_form_after_an_approval_pause_saves_the_approved_values(tmp
         register_server.should_exit = True
         await portal_task
         await register_task
+
+
+@pytest.mark.asyncio
+async def test_error_pages_and_formless_pages_give_actionable_feedback(tmp_path):
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    principal = Principal(user_id="meera", email="meera@example.com", display_name="Meera",
+                          role="operator")
+    browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                         register_url=register_url)
+    cookies = await browser.context.cookies(register_url)
+    session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+    probes = Probes(portal_url=portal_url, register_url=register_url, probe_key="probe-demo",
+                    register_session=session, workspace=tmp_path / "workspace")
+    store = Store(tmp_path / "worker.db")
+    store.create_run("r1", "Kestrova Components sent new contact details", principal, "fake")
+    try:
+        worker = WorkerLoop(store=store, provider=FakeProvider([
+            {"tool": "open_page", "arguments": {"app": "register", "page": "supplier_edit",
+                                                "id": "Kestrova Components"}},
+            {"tool": "open_page", "arguments": {"app": "portal", "page": "invoice", "id": "kc-702"}},
+            {"tool": "fill_form", "arguments": {"fields": [{"label": "Amount", "text": "1"}]}},
+            {"tool": "ask_user", "arguments": {"question": "?"}},
+        ]), browser=browser, probes=probes, workspace=None,
+            portal_url=portal_url, register_url=register_url)
+        await worker.run("r1")
+        steps = [event.data for event in store.events("r1") if event.type == "step"]
+        assert not steps[0]["ok"] and "no such page" in steps[0]["summary"]
+        assert not steps[2]["ok"] and "has no form" in steps[2]["summary"]
+    finally:
+        await probes.close()
+        await browser.close()
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task

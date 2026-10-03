@@ -26,5 +26,5 @@ procedures:
   register_invoice: {read: portal.invoice, write: register.new_invoice}
   check_or_register_invoice: {read: portal.invoice, write: register.new_invoice}
   register_batch: {read: portal.invoice, write: register.new_invoice}
-  update_supplier_contact: {read: portal.message, write: register.supplier_edit}
+  update_supplier_contact: {read: portal.message, write: register.supplier_edit, write_id: supplier}
   export_invoices: {write: workspace.exports}

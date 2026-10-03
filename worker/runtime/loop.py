@@ -297,6 +297,11 @@ class WorkerLoop:
                         "progress": False}
             await self.browser.navigate(url)
             observation = await self._observe(state)
+            status = getattr(self.browser, "last_navigation_status", None)
+            if status and status >= 400:
+                return {"ok": False, "progress": False, "summary":
+                        f"{args['app']}.{args['page']} answered {status}: no such page. "
+                        "Check the id; the goal lists the ids it fixes."}
             return {"ok": True, "summary": self._page_summary(observation), "progress": True}
         if name == "record_facts":
             return self._record_facts(state, args)
@@ -531,6 +536,10 @@ class WorkerLoop:
 
     async def _fill_form(self, state: RuntimeState, items: list) -> dict:
         observation = self.browser.current or await self._observe(state)
+        if not any(item.role in FILLABLE for item in observation.elements):
+            return {"ok": False, "progress": False, "summary":
+                    f"'{observation.title}' has no form. Open the page where the values are "
+                    "entered (the write page in the procedure), then fill it."}
         plan = []
         for item in items:
             if not isinstance(item, dict) or "label" not in item or \

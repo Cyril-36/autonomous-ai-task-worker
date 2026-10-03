@@ -63,7 +63,8 @@ def describe_goal(contract, apps) -> str:
     procedure = apps.procedure(contract.goal_type.value) if apps else {}
     lines = [f"Locked goal: {contract.goal_type.value}"]
     if contract.supplier_name:
-        lines.append(f"Supplier: {contract.supplier_name} (fact goal.supplier)")
+        lines.append(f"Supplier: {contract.supplier_name} (id {contract.supplier_id}; "
+                     "fact goal.supplier)")
     if contract.sources:
         lines.append("Sources, in order: " + "; ".join(
             f"{source.key} = document {source.doc_id}" for source in contract.sources))
@@ -81,7 +82,9 @@ def describe_goal(contract, apps) -> str:
         if procedure.get("write") == "workspace.exports":
             steps.append("write the file with files_write")
         elif procedure.get("write"):
-            steps.append(f"enter its values at {procedure['write']}")
+            write_id = ("(id=" + str(contract.supplier_id) + ")"
+                        if procedure.get("write_id") == "supplier" else "")
+            steps.append(f"enter its values in the form at {procedure['write']}{write_id}")
         lines.append("Procedure: " + ", then ".join(steps) + ".")
     lines.append("Checks that must pass: " + "; ".join(
         item.description for item in contract.obligations))

@@ -50,7 +50,8 @@ def test_model_gets_task_level_tools_not_low_level_ones():
 
 
 def _contract(goal_type: GoalType, **extra):
-    base = {"goal_type": goal_type, "supplier_name": None, "sources": [], "batch_remaining": [],
+    base = {"goal_type": goal_type, "supplier_name": None, "supplier_id": None, "sources": [],
+            "batch_remaining": [],
             "filter": None, "field_map": [], "obligations": [Obligation(
                 obligation_id="o", kind="extra", description="A check")]}
     base.update(extra)
@@ -165,3 +166,12 @@ def test_trace_is_append_only_and_redacts_secrets(tmp_path):
     assert len(lines) == 2
     assert "secret" not in "\n".join(lines)
     assert json.loads(lines[0])["model"] == "fake"
+
+
+def test_goal_description_gives_write_pages_their_id_from_the_manifest():
+    from worker.runtime.prompts import describe_goal
+    source = SourceRef(kind="message", doc_id="msg-x", revision="1", supplier_id="sup-x", key="msg-x")
+    contract = _contract(GoalType.update_supplier_contact, supplier_name="Sup X", sources=[source],
+                         supplier_id="sup-x")
+    text = describe_goal(contract, APPS)
+    assert "register.supplier_edit(id=sup-x)" in text and "portal.message(id=" in text
