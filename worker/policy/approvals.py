@@ -10,7 +10,8 @@ from worker.contracts import Approval, ApprovalStatus, MutationIntent, ValueChan
 
 
 def intent_hash(intent: MutationIntent) -> str:
-    return hashlib.sha256(intent.model_dump_json(exclude={"secret_fields"}).encode()).hexdigest()
+    return hashlib.sha256(intent.model_dump_json(
+        exclude={"secret_fields", "mutation_id"}).encode()).hexdigest()
 
 
 def create_approval(

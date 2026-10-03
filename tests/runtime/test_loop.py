@@ -1,0 +1,397 @@
+import asyncio
+import csv
+import socket
+from datetime import date
+
+import pytest
+import uvicorn
+
+from sandbox.portal.app import create_app as portal_app
+from sandbox.register.app import create_app as register_app
+from sandbox.register.db import connect
+from tests.verify.util import FakeProbes
+from worker.contracts import Approval, Principal
+from worker.llm.fake import FakeProvider
+from worker.policy.approvals import decide_approval
+from worker.runtime.loop import WorkerLoop
+from worker.store import Store
+from worker.tools.browser import BrowserSession
+from worker.tools.files import WorkspaceFiles
+from worker.verify.probes import CsvRows, Probes
+
+
+@pytest.mark.asyncio
+async def test_finish_without_contract_is_not_completed(tmp_path):
+    store = Store(tmp_path / "worker.db")
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    store.create_run("r1", "Register latest invoice from Larkspur Supplies", principal, "fake")
+    loop = WorkerLoop(store=store, provider=FakeProvider([{"tool": "finish",
+                                                           "arguments": {"summary": "Done"}}]),
+                      browser=None, probes=None, workspace=None,
+                      portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+    await loop.run("r1")
+    assert store.get_run("r1").status != "completed"
+    assert not any(event.type == "verification" and event.data.get("passed")
+                   for event in store.events("r1"))
+
+
+@pytest.mark.asyncio
+async def test_unsupported_goal_ends_explicitly(tmp_path):
+    store = Store(tmp_path / "worker.db")
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    store.create_run("r1", "Pay all suppliers", principal, "fake")
+    worker = WorkerLoop(store=store, provider=FakeProvider([
+        {"tool": "commit_goal", "arguments": {"contract": {"goal_type": "make_payment"}}},
+    ]), browser=None, probes=None, workspace=None,
+        portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+    await worker.run("r1")
+    assert store.get_run("r1").status == "unsupported"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_supplier_pauses_and_answer_allows_goal_commit(tmp_path):
+    class ProbesWithPolicy(FakeProbes):
+        async def register_policy(self):
+            return {"version": 1, "threshold": "100000.00"}
+
+    store = Store(tmp_path / "worker.db")
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    store.create_run("r1", "Register latest invoice from Larkspur", principal, "fake")
+    provider = FakeProvider([
+        {"tool": "commit_goal", "arguments": {"contract": {"goal_type": "register_invoice",
+            "supplier": "Larkspur", "selector": "latest"}}},
+        {"tool": "commit_goal", "arguments": {"contract": {"goal_type": "register_invoice",
+            "supplier": "Larkspur Supplies", "selector": "latest"}}},
+    ])
+    worker = WorkerLoop(store=store, provider=provider, browser=None,
+                        probes=ProbesWithPolicy(), workspace=None,
+                        portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+    await worker.run("r1")
+    assert store.get_run("r1").status == "awaiting_input"
+    assert any(event.type == "question" and "Larkspur Supplies" in event.data["candidates"]
+               for event in store.events("r1"))
+    await worker.run("r1", answer="Larkspur Supplies")
+    assert any(event.type == "contract" for event in store.events("r1"))
+
+
+@pytest.mark.asyncio
+async def test_existing_invoice_finishes_without_write(tmp_path):
+    class ExistingProbes(FakeProbes):
+        async def register_policy(self):
+            return {"version": 1, "threshold": "100000.00"}
+
+    probes = ExistingProbes()
+    probes.registered = [{**probes.documents[1], "id": 7, "version": 1}]
+    store = Store(tmp_path / "worker.db")
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    store.create_run("r1", "Check or register LS-1042 from Larkspur Supplies", principal, "fake")
+    worker = WorkerLoop(store=store, provider=FakeProvider([
+        {"tool": "commit_goal", "arguments": {"contract": {
+            "goal_type": "check_or_register_invoice", "supplier": "Larkspur Supplies",
+            "selector": "invoice_number", "invoice_number": "LS-1042"}}},
+        {"tool": "finish", "arguments": {"summary": "Done"}},
+    ]), browser=None, probes=probes, workspace=None,
+        portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+    await worker.run("r1")
+    assert store.get_run("r1").status == "completed"
+    assert not store.pending_for_run("r1")
+
+
+@pytest.mark.asyncio
+async def test_export_uses_probe_rows_and_verifies_exact_csv(tmp_path):
+    class ExportProbes(FakeProbes):
+        async def register_policy(self):
+            return {"version": 1, "threshold": "100000.00"}
+
+        async def workspace_csv(self, path):
+            with (tmp_path / "workspace" / path).open(newline="") as stream:
+                reader = csv.DictReader(stream)
+                return CsvRows(list(reader), reader.fieldnames or [])
+
+    probes = ExportProbes()
+    probes.registered = [dict(probes.documents[0]), dict(probes.documents[1])]
+    store = Store(tmp_path / "worker.db")
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    store.create_run("r1", "Export invoices due before 2026-12-01", principal, "fake")
+    worker = WorkerLoop(store=store, provider=FakeProvider([
+        {"tool": "commit_goal", "arguments": {"contract": {
+            "goal_type": "export_invoices", "selector": "filter", "due_before": "2026-12-01"}}},
+        {"tool": "files_write", "arguments": {"name": "due.csv",
+            "probe_query": {"due_before": "2026-12-01"}}},
+        {"tool": "finish", "arguments": {"summary": "Done"}},
+    ]), browser=None, probes=probes, workspace=WorkspaceFiles(tmp_path / "workspace"),
+        portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+    await worker.run("r1")
+    assert store.get_run("r1").status == "completed"
+    assert (tmp_path / "workspace" / "exports" / "due.csv").is_file()
+
+
+async def _serve(app):
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(10)
+    url = f"http://127.0.0.1:{sock.getsockname()[1]}"
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
+    task = asyncio.create_task(server.serve(sockets=[sock]))
+    while not server.started:
+        await asyncio.sleep(0.01)
+    return url, server, task
+
+
+def _intake_script(portal_url, register_url, *, supplier="Larkspur Supplies",
+                   number="LS-1042", fault=None):
+    approval_case = fault in {"approval", "reject"}
+    script = [
+        {"tool": "browser_navigate", "arguments": {"url": f"{portal_url}/invoices"}},
+        {"tool": "browser_snapshot"},
+        {"tool": "browser_click", "target": number},
+        {"tool": "browser_snapshot"},
+    ]
+    script += [{"tool": "record_fact", "arguments": {
+        "key": key, "observation_id": "OBS", "field_locator": label, "type": kind,
+    }} for key, label, kind in [
+        ("number", "Invoice number", "text"), ("amount", "Amount", "amount"),
+        ("due", "Due date", "date"), ("currency", "Currency", "text"),
+    ]]
+    proposal = {"goal_type": "register_invoice", "supplier": supplier,
+                "selector": "invoice_number" if approval_case else "latest"}
+    if approval_case:
+        proposal["invoice_number"] = number
+    script += [{"tool": "commit_goal", "arguments": {"contract": proposal}}]
+    write_steps = [
+        {"tool": "browser_navigate", "arguments": {"url": f"{register_url}/invoices/new"}},
+        {"tool": "browser_snapshot"},
+        {"tool": "browser_select", "target": "Supplier", "arguments": {"option": supplier}},
+        {"tool": "browser_snapshot"},
+        {"tool": "browser_fill", "target": "Invoice number", "arguments": {"fact_key": "number"}},
+        {"tool": "browser_snapshot"},
+        {"tool": "browser_fill", "target": "Total" if fault == "layout_b" else "Amount",
+         "arguments": {"fact_key": "amount"}},
+        {"tool": "browser_snapshot"},
+        {"tool": "browser_fill", "target": "Payment due" if fault == "layout_b" else "Due date",
+         "arguments": {"fact_key": "due"}},
+        {"tool": "browser_snapshot"},
+        {"tool": "browser_fill", "target": "Source document",
+         "arguments": {"free_text": number.lower()}},
+        {"tool": "browser_snapshot"},
+        {"tool": "browser_click", "target": "Record invoice" if fault == "layout_b" else "Save"},
+    ]
+    script += write_steps
+    if fault == "fail_next_save":
+        script += write_steps
+    if approval_case:
+        script += [{"tool": "browser_snapshot"}, {"tool": "browser_click", "target": "Save"}]
+    script += [{"tool": "finish", "arguments": {"summary": "Done"}}]
+    return script
+
+
+@pytest.mark.parametrize(("fault", "user_id", "expected_status"), [
+    (None, "ravi", "completed"),
+    ("fail_next_save", "ravi", "completed"),
+    ("commit_then_timeout", "ravi", "completed"),
+    (None, "meera", "blocked"),
+    ("approval", "ravi", "completed"),
+    ("reject", "ravi", "blocked"),
+    ("layout_b", "ravi", "completed"),
+    ("corrupt_next_save", "ravi", "failed"),
+])
+@pytest.mark.asyncio
+async def test_fake_model_drives_real_browser_and_verifies_invoice(tmp_path, fault, user_id, expected_status):
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    if fault in {"fail_next_save", "commit_then_timeout", "layout_b", "corrupt_next_save"}:
+        with connect(tmp_path / "register.db") as db:
+            if fault == "commit_then_timeout":
+                db.execute("UPDATE faults SET commit_then_timeout=1 WHERE id=1")
+            elif fault == "layout_b":
+                db.execute("UPDATE faults SET layout_variant='b' WHERE id=1")
+            elif fault == "corrupt_next_save":
+                db.execute("UPDATE faults SET corrupt_next_save=1 WHERE id=1")
+            else:
+                db.execute("UPDATE faults SET fail_next_save=1 WHERE id=1")
+    principal = Principal(user_id=user_id, email=f"{user_id}@example.com",
+                          display_name=user_id.title(), role="operator")
+    browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                         register_url=register_url)
+    cookies = await browser.context.cookies(register_url)
+    session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+    probes = Probes(portal_url=portal_url, register_url=register_url, probe_key="probe-demo",
+                    register_session=session, workspace=tmp_path / "workspace")
+    store = Store(tmp_path / "worker.db")
+    approval_case = fault in {"approval", "reject"}
+    supplier = "Brightfen Paper" if approval_case else "Larkspur Supplies"
+    number = "BF-2292" if approval_case else "LS-1042"
+    request = (f"Register invoice {number} from {supplier}" if approval_case
+               else "Register the latest invoice from Larkspur Supplies")
+    store.create_run("r1", request, principal, "fake")
+    script = _intake_script(portal_url, register_url, supplier=supplier,
+                            number=number, fault=fault)
+    try:
+        worker = WorkerLoop(store=store, provider=FakeProvider(script), browser=browser,
+                            probes=probes, workspace=WorkspaceFiles(tmp_path / "workspace"),
+                            portal_url=portal_url, register_url=register_url)
+        await worker.run("r1")
+        if approval_case:
+            assert store.get_run("r1").status == "awaiting_approval"
+            approval = store.approvals("r1")[0]
+            approved = decide_approval(Approval.model_validate(approval),
+                                       "reject" if fault == "reject" else "approve",
+                                       "ravi@example.com")
+            store.save_approval(approved.approval_id, "r1", approved.model_dump(mode="json"))
+            await worker.run("r1")
+        assert store.get_run("r1").status == expected_status, [
+            (event.type, event.data) for event in store.events("r1")]
+        rows = await probes.register_invoices(supplier_id=(
+            "brightfen-paper" if approval_case else "larkspur-supplies"))
+        assert [row["invoice_number"] for row in rows].count(number) == (
+            1 if expected_status in {"completed", "failed"} else 0)
+        assert any(event.type == "verification" and event.data["passed"]
+                   for event in store.events("r1")) == (expected_status == "completed")
+        screenshots = [event.data["screenshot"] for event in store.events("r1")
+                       if event.type == "step" and event.data.get("screenshot")]
+        assert screenshots
+        assert (tmp_path / "artifacts" / "r1" / screenshots[-1]).is_file()
+    finally:
+        await probes.close()
+        await browser.close()
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task
+
+
+@pytest.mark.asyncio
+async def test_restart_after_dispatch_reconciles_exactly_one_invoice(tmp_path):
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    with connect(tmp_path / "register.db") as db:
+        db.execute("UPDATE faults SET commit_then_timeout=1 WHERE id=1")
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    store = Store(tmp_path / "worker.db")
+    store.create_run("r1", "Register latest invoice from Larkspur Supplies", principal, "fake")
+    workspace = WorkspaceFiles(tmp_path / "workspace")
+
+    async def make_worker(script):
+        browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                             register_url=register_url)
+        cookies = await browser.context.cookies(register_url)
+        session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+        probes = Probes(portal_url=portal_url, register_url=register_url,
+                        probe_key="probe-demo", register_session=session,
+                        workspace=tmp_path / "workspace")
+        worker = WorkerLoop(store=store, provider=FakeProvider(script), browser=browser,
+                            probes=probes, workspace=workspace,
+                            portal_url=portal_url, register_url=register_url)
+        return worker, browser, probes
+
+    first, browser, probes = await make_worker(_intake_script(portal_url, register_url))
+    task = asyncio.create_task(first.run("r1"))
+    try:
+        for _ in range(300):
+            await asyncio.sleep(0.02)
+            with connect(tmp_path / "register.db") as db:
+                saved = db.execute("SELECT COUNT(*) FROM invoices WHERE invoice_number='LS-1042'").fetchone()[0]
+            if saved and any(item.state == "dispatching" for item in store.pending_for_run("r1")):
+                break
+        assert saved == 1
+        assert store.pending_for_run("r1")[0].state == "dispatching"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await probes.close()
+        await browser.close()
+        store.update_run("r1", status="interrupted")
+        resumed, new_browser, new_probes = await make_worker([
+            {"tool": "finish", "arguments": {"summary": "Done"}},
+        ])
+        try:
+            await resumed.run("r1")
+            assert store.get_run("r1").status == "completed"
+            assert store.pending_for_run("r1")[0].state == "committed"
+            rows = await new_probes.register_invoices(supplier_id="larkspur-supplies")
+            assert [row["invoice_number"] for row in rows].count("LS-1042") == 1
+        finally:
+            await new_probes.close()
+            await new_browser.close()
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task
+
+
+@pytest.mark.asyncio
+async def test_contact_update_requires_approval_and_verifies_source(tmp_path):
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    principal = Principal(user_id="ravi", email="ravi@example.com",
+                          display_name="Ravi", role="operator")
+    browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                         register_url=register_url)
+    cookies = await browser.context.cookies(register_url)
+    session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+    store = Store(tmp_path / "worker.db")
+    store.create_run("r1", "Update Larkspur Supplies contact from their message", principal, "fake")
+    probes = Probes(portal_url=portal_url, register_url=register_url,
+                    probe_key="probe-demo", register_session=session,
+                    workspace=tmp_path / "workspace", store=store)
+    script = [
+        {"tool": "browser_navigate", "arguments": {"url": f"{portal_url}/messages/msg-larkspur"}},
+        {"tool": "browser_snapshot"},
+    ]
+    script += [{"tool": "record_fact", "arguments": {"key": key,
+        "observation_id": "OBS", "field_locator": label, "type": "text"}}
+        for key, label in [("contact_name", "Contact name"),
+                           ("contact_email", "Contact email"),
+                           ("remittance_email", "Remittance email")]]
+    script += [{"tool": "commit_goal", "arguments": {"contract": {
+        "goal_type": "update_supplier_contact", "supplier": "Larkspur Supplies",
+        "selector": "message", "source_doc_id": "msg-larkspur"}}},
+        {"tool": "browser_navigate", "arguments": {
+            "url": f"{register_url}/suppliers/larkspur-supplies/edit"}},
+        {"tool": "browser_snapshot"}]
+    for key, label in [("contact_name", "Contact name"),
+                       ("contact_email", "Contact email"),
+                       ("remittance_email", "Remittance email")]:
+        script += [{"tool": "browser_fill", "target": label, "arguments": {"fact_key": key}},
+                   {"tool": "browser_snapshot"}]
+    script += [{"tool": "browser_click", "target": "Save"},
+               {"tool": "browser_snapshot"},
+               {"tool": "browser_click", "target": "Save"},
+               {"tool": "finish", "arguments": {"summary": "Done"}}]
+    worker = WorkerLoop(store=store, provider=FakeProvider(script), browser=browser,
+                        probes=probes, workspace=WorkspaceFiles(tmp_path / "workspace"),
+                        portal_url=portal_url, register_url=register_url)
+    try:
+        await worker.run("r1")
+        assert store.get_run("r1").status == "awaiting_approval"
+        approval = Approval.model_validate(store.approvals("r1")[0])
+        approved = decide_approval(approval, "approve", "ravi@example.com")
+        store.save_approval(approved.approval_id, "r1", approved.model_dump(mode="json"))
+        await worker.run("r1")
+        assert store.get_run("r1").status == "completed", [
+            (event.type, event.data.get("summary")) for event in store.events("r1")]
+        supplier = await probes.register_supplier("larkspur-supplies")
+        assert supplier["contact_email"] == "nina@larkspur.example.com"
+    finally:
+        await probes.close()
+        await browser.close()
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task

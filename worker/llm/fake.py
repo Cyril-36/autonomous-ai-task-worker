@@ -8,18 +8,20 @@ from collections import deque
 from worker.llm.provider import ProviderError, ProviderResponse
 
 
-def _latest_elements(messages: list[dict]) -> list[dict]:
+def _latest_observation(messages: list[dict]) -> dict:
     for message in reversed(messages):
         content = message.get("content")
         if not isinstance(content, str):
             continue
+        if content.startswith("<untrusted_page>") and content.endswith("</untrusted_page>"):
+            content = content[len("<untrusted_page>"):-len("</untrusted_page>")]
         try:
             data = json.loads(content)
         except ValueError:
             continue
         if isinstance(data, dict) and "elements" in data:
-            return data["elements"]
-    return []
+            return data
+    return {}
 
 
 class FakeProvider:
@@ -37,9 +39,13 @@ class FakeProvider:
         if "content" in step:
             return ProviderResponse(step["content"], [], "fake", None)
         arguments = dict(step.get("arguments", {}))
+        observed = _latest_observation(messages)
+        if arguments.get("observation_id") == "OBS":
+            arguments["observation_id"] = observed.get("observation_id", "")
         if "target" in step:
-            matches = [item for item in _latest_elements(messages)
-                       if item.get("name") == step["target"]]
+            matches = [item for item in observed.get("elements", [])
+                       if item.get("name") == step["target"] or
+                       item.get("name", "").startswith(step["target"] + " ")]
             if len(matches) != 1:
                 raise ProviderError("target_missing")
             arguments["ref"] = matches[0]["ref"]

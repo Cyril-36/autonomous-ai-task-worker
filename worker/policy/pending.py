@@ -36,7 +36,9 @@ async def reconcile(pending: PendingMutation, probes) -> ReconcileDecision:
         return ReconcileDecision(pending, False)
     result = await probes.void_operation(pending.form_token)
     status = result["status"]
-    current = await probes.invoice_by_key(pending.target_key)
+    current = (await probes.target_by_key(pending.target_key)
+               if hasattr(probes, "target_by_key") else
+               await probes.invoice_by_key(pending.target_key))
     if status == "committed":
         after = result.get("after") or {}
         matches_after = all(after.get(key) == value for key, value in pending.intended_values.items())
@@ -48,7 +50,7 @@ async def reconcile(pending: PendingMutation, probes) -> ReconcileDecision:
         return ReconcileDecision(pending.model_copy(update={
             "state": "conflict", "reason": "Committed values differ from intended values",
         }), False)
-    if status == "voided":
+    if status in {"voided", "rejected"}:
         unchanged = (
             current is None if pending.before_values is None else
             current is not None and current.get("version") == pending.before_version and
@@ -60,7 +62,7 @@ async def reconcile(pending: PendingMutation, probes) -> ReconcileDecision:
             }), False)
         retry = pending.retries < 2
         return ReconcileDecision(pending.model_copy(update={
-            "state": "voided", "reason": "Safe to retry with a fresh form" if retry else "Retry limit reached",
+            "state": status, "reason": "Safe to retry with a fresh form" if retry else "Retry limit reached",
         }), retry)
     return ReconcileDecision(pending.model_copy(update={
         "state": "conflict", "reason": f"Unexpected operation state: {status}",

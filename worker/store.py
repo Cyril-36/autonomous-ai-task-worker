@@ -92,7 +92,8 @@ class Store:
         return [self.get_run(run_id) for run_id in ids]
 
     def update_run(self, run_id: str, *, status: str | None = None,
-                   phase: str | None = None, steps: int | None = None) -> RunSummary:
+                   phase: str | None = None, steps: int | None = None,
+                   cost_inr: Decimal | None = None) -> RunSummary:
         updates = {"updated_at": utc_now().isoformat().replace("+00:00", "Z")}
         if status is not None:
             updates["status"] = status
@@ -100,6 +101,8 @@ class Store:
             updates["phase"] = phase
         if steps is not None:
             updates["steps"] = steps
+        if cost_inr is not None:
+            updates["cost_inr"] = f"{cost_inr:.2f}"
         clause = ", ".join(f"{key}=?" for key in updates)
         with self.connect() as db:
             db.execute(f"UPDATE runs SET {clause} WHERE run_id=?", (*updates.values(), run_id))

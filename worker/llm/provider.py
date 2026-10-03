@@ -57,7 +57,7 @@ class Provider:
     async def complete(self, *, messages: list[dict], tools: list[dict],
                        max_tokens: int, run_id: str) -> ProviderResponse:
         request = {"model": self.model, "messages": messages, "tools": tools,
-                   "max_tokens": max_tokens}
+                   "tool_choice": "required", "max_tokens": max_tokens}
         for attempt in range(3):
             entry = self.ledger.reserve(run_id, self.model, request)
             try:
@@ -74,8 +74,15 @@ class Provider:
                 usage.update(response.usage.model_extra)
             self.ledger.settle(entry.entry_id, usage)
             message = response.choices[0].message
-            calls = [{"id": call.id, "name": call.function.name,
-                      "arguments": json.loads(call.function.arguments)}
-                     for call in message.tool_calls or []]
+            calls = []
+            for call in message.tool_calls or []:
+                try:
+                    arguments = json.loads(call.function.arguments)
+                    invalid = not isinstance(arguments, dict)
+                except ValueError:
+                    arguments, invalid = {}, True
+                calls.append({"id": call.id, "name": call.function.name,
+                              "arguments": arguments if not invalid else {},
+                              "invalid_arguments": invalid})
             return ProviderResponse(message.content, calls, response.model, usage, entry.entry_id)
         raise ProviderError("server")

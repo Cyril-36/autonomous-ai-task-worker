@@ -82,6 +82,11 @@ class Probes:
         return next((row for row in rows if row["invoice_number"] == target_key["invoice_number"]),
                     None)
 
+    async def target_by_key(self, target_key: dict[str, str]):
+        if "invoice_number" in target_key:
+            return await self.invoice_by_key(target_key)
+        return await self.register_supplier(target_key["supplier_id"])
+
     async def workspace_csv(self, path: str) -> list[dict[str, str]] | None:
         target = (self.workspace / path).resolve()
         if not target.is_relative_to(self.workspace) or not target.is_file():

@@ -28,3 +28,12 @@ def test_approval_invalidated_by_target_or_policy_change():
     assert not validate_approval(approved, mutation.model_copy(update={"target_version": 2}),
                                  1, now=now)
     assert not validate_approval(approved, mutation, 2, now=now)
+
+
+def test_approval_reused_for_same_form_after_new_tool_call_id():
+    now = datetime(2026, 10, 3, tzinfo=UTC)
+    mutation = intent()
+    approved = decide_approval(create_approval(mutation, "Threshold", 1, now=now),
+                               "approve", "asha@example.com", now=now)
+    next_call = mutation.model_copy(update={"mutation_id": "next-tool-call"})
+    assert validate_approval(approved, next_call, 1, now=now)

@@ -59,3 +59,25 @@ async def test_voided_allows_bounded_retry_only_when_unchanged():
     result = await reconcile(update, changed)
     assert result.pending.state == "conflict"
     assert not result.retry_allowed
+
+
+@pytest.mark.asyncio
+async def test_server_rejected_write_can_retry_if_target_unchanged():
+    result = await reconcile(pending(), FakeProbes("rejected", current=None))
+    assert result.pending.state == "rejected"
+    assert result.retry_allowed
+
+
+@pytest.mark.asyncio
+async def test_supplier_update_reconciles_by_supplier_key():
+    class SupplierProbes(FakeProbes):
+        async def target_by_key(self, target_key):
+            return {"id": target_key["supplier_id"], "contact_name": "Nina Sen",
+                    "version": 2}
+
+    update = pending(target_key={"supplier_id": "larkspur-supplies"},
+                     before_values={"contact_name": "Old"}, before_version=1,
+                     intended_values={"contact_name": "Nina Sen"})
+    result = await reconcile(update, SupplierProbes("committed",
+        after={"contact_name": "Nina Sen"}))
+    assert result.pending.state == "committed"

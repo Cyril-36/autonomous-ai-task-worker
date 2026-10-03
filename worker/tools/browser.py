@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -30,12 +31,12 @@ SNAPSHOT_JS = """() => {
     role: el.tagName === 'A' ? 'link' : el.tagName === 'BUTTON' ? 'button' :
       el.tagName === 'SELECT' ? 'combobox' : el.tagName === 'TEXTAREA' ? 'textarea' :
       el.type === 'date' ? 'date' : 'textbox',
-    name: nameOf(el), value: el.type === 'password' ? null : (el.value ?? null),
+    name: nameOf(el), value: ['password', 'hidden'].includes(el.type) ? null : (el.value ?? null),
     form_id: el.form?.id || null, submits_form: el.type === 'submit' ||
       (el.tagName === 'BUTTON' && (!el.type || el.type === 'submit')),
     options: el.tagName === 'SELECT' ? [...el.options].map(x => x.text) : [],
     href: el.tagName === 'A' ? el.href : null,
-    secret: el.type === 'password' || el.dataset.secret === 'true', i
+    secret: ['password', 'hidden'].includes(el.type) || el.dataset.secret === 'true', i
   }));
   const documents = [...document.querySelectorAll('article[data-doc-id][data-revision][data-kind]')]
     .map(article => ({doc_id: article.dataset.docId, revision: article.dataset.revision,
@@ -80,7 +81,13 @@ class BrowserSession:
         self.current: Observation | None = None
         self._locators: dict[str, int] = {}
         self.offsite_navigation: str | None = None
+        self.last_navigation_status: int | None = None
         page.on("framenavigated", self._on_navigation)
+        page.on("response", self._on_response)
+
+    def _on_response(self, response) -> None:
+        if response.request.is_navigation_request():
+            self.last_navigation_status = response.status
 
     @classmethod
     async def local_test(cls, run_id: str, origins: set[str] | None = None) -> BrowserSession:
@@ -182,22 +189,31 @@ class BrowserSession:
             observation_id=observation_id, run_id=self.run_id, step=self.step,
             url=self.page.url, title=raw["title"], text=raw["text"],
             elements=elements, documents=documents,
-            content_hash=hashlib.sha256(content.encode()).hexdigest(),
+            content_hash=self._hash_content(content, raw),
             screenshot_path=str(screenshot_path) if screenshot_path else None,
         )
         self.current = observation
         return observation
 
+    @staticmethod
+    def _hash_content(content: str, raw: dict) -> str:
+        values = [(item["i"], None if item["secret"] else item["value"])
+                  for item in raw["elements"]]
+        material = json.dumps([content, values], ensure_ascii=False)
+        return hashlib.sha256(material.encode()).hexdigest()
+
     async def _resolve(self, ref: str):
         if not self.current or ref not in self._locators:
             raise StaleRef(ref)
         content = await self.page.content()
-        if hashlib.sha256(content.encode()).hexdigest() != self.current.content_hash:
+        raw = await self.page.evaluate(SNAPSHOT_JS)
+        if self._hash_content(content, raw) != self.current.content_hash:
             raise StaleRef(ref)
         return self.page.locator("a,button,input,select,textarea").nth(self._locators[ref])
 
     async def click(self, ref: str) -> None:
         locator = await self._resolve(ref)
+        self.last_navigation_status = None
         await locator.click()
         self.current = None
 
