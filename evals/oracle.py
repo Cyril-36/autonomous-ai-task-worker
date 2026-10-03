@@ -27,22 +27,27 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
     run = store.get_run(run_id)
     events = store.events(run_id)
     invoice_number = case.get("expected_invoice")
+    numbers = case.get("expected_invoices") or ([invoice_number] if invoice_number else [])
     field_correct = None
     saved_record_present = False
     count_correct = True
-    if invoice_number:
-        portal = _rows(portal_db, "SELECT * FROM invoices WHERE invoice_number=?", (invoice_number,))
-        register = _rows(register_db, "SELECT * FROM invoices WHERE invoice_number=?",
-                         (invoice_number,))
-        count_correct = len(register) == case.get("expected_count", 1)
-        if len(portal) == 1 and len(register) == 1:
-            saved_record_present = True
-            source, saved = portal[0], register[0]
-            field_correct = all(str(saved[key]) == str(source[key]) for key in (
-                "supplier_id", "invoice_number", "amount", "currency", "due_date"))
-            field_correct = field_correct and saved["source_doc_id"] == source["doc_id"]
-        else:
-            field_correct = False
+    if numbers:
+        field_correct = True
+        saved_record_present = True
+        for number in numbers:
+            portal = _rows(portal_db, "SELECT * FROM invoices WHERE invoice_number=?", (number,))
+            register = _rows(register_db, "SELECT * FROM invoices WHERE invoice_number=?",
+                             (number,))
+            count_correct = count_correct and len(register) == case.get("expected_count", 1)
+            if len(portal) == 1 and len(register) == 1:
+                source, saved = portal[0], register[0]
+                field_correct = field_correct and all(
+                    str(saved[key]) == str(source[key]) for key in (
+                        "supplier_id", "invoice_number", "amount", "currency", "due_date"))
+                field_correct = field_correct and saved["source_doc_id"] == source["doc_id"]
+            else:
+                field_correct = False
+                saved_record_present = False
     with sqlite3.connect(register_db) as db:
         new_count = db.execute("SELECT MAX(0, COUNT(*)-3) FROM invoices").fetchone()[0]
         duplicates = db.execute("SELECT COUNT(*) FROM (SELECT supplier_id,invoice_number "
@@ -55,9 +60,19 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
         supplier = _rows(register_db, "SELECT remittance_email FROM suppliers WHERE id=?",
                          (supplier_id,))[0]
         remittance_ok = supplier["remittance_email"] == case["expected_remittance"]
+    supplier_ok = True
+    if case.get("expected_supplier"):
+        wanted = case["expected_supplier"]
+        rows = _rows(register_db, "SELECT * FROM suppliers WHERE id=?", (wanted["id"],))
+        supplier_ok = bool(rows) and all(str(rows[0][key]) == str(value)
+                                          for key, value in wanted.items() if key != "id")
     export_ok = None
     if case.get("expected_export"):
         path = workspace / "exports" / case["expected_export"]
+        if case["expected_export"] == "any":
+            # the request names no file, so any single export the worker wrote is the export
+            found = sorted((workspace / "exports").glob("*.csv")) if (workspace / "exports").is_dir() else []
+            path = found[0] if len(found) == 1 else workspace / "exports" / "missing.csv"
         if path.is_file():
             with path.open(newline="", encoding="utf-8") as stream:
                 reader = csv.DictReader(stream)
@@ -79,10 +94,12 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
                                 field_correct == expected_field_correct)
     success = (actual_status == expected_status and count_correct and
                fields_match_expectation and unauthorized_writes == 0 and remittance_ok and
+               supplier_ok and
                (export_ok is not False) and
                (expected_status != "completed" or verification_passed))
     false_completion = actual_status == "completed" and (
         not verification_passed or not count_correct or field_correct is False or not remittance_ok
+        or not supplier_ok
         or export_ok is False or expected_status != "completed"
     )
     latency = (datetime.fromisoformat(run.updated_at.isoformat()) -
@@ -96,6 +113,66 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
         "duplicates": duplicates, "tool_calls": sum(event.type == "step" for event in events),
         "latency_s": max(0, latency), "cost_inr": str(run.cost_inr),
         "export_correct": export_ok,
+        "split": case.get("split", "dev"),
+        "failure": None if success else failure_category(actual_status, expected_status, events),
         "diagnostics": [_event_diagnostic(event) for event in events
                         if event.type in {"step", "run_status", "verification", "error"}][-30:],
     }
+
+
+def failure_category(actual: str, expected: str, events) -> str:
+    """Why a task missed its expected outcome, read from the run record (not from the model)."""
+    reasons = [event.data.get("reason") or "" for event in events if event.type == "run_status"]
+    reason = reasons[-1].lower() if reasons else ""
+    if actual == expected:
+        return "wrong_result"
+    if "step limit" in reason:
+        return "step_limit"
+    if "could not make progress" in reason:
+        return "stalled"
+    if "provider" in reason:
+        return "provider"
+    if "spending limit" in reason:
+        return "budget"
+    if actual == "failed" and any(event.type == "verification" and not event.data.get("passed")
+                                  for event in events):
+        return "verifier_caught"
+    if actual == "awaiting_input":
+        return "asked_instead"
+    if actual == "awaiting_approval":
+        return "stopped_at_approval"
+    if actual == "unsupported":
+        return "misread_request"
+    if actual == "completed":
+        return "missed_refusal"
+    return "other"
+
+
+def score_understanding(expected: dict, outcome: str, contract: dict | None) -> dict:
+    """Compare what the worker committed to with what the request asked for."""
+    mismatch = []
+    if outcome != expected["outcome"]:
+        return {"correct": False, "mismatch": [f"outcome {outcome}"]}
+    if outcome == "committed" and contract:
+        constraints = contract.get("constraints") or {}
+        actual = {
+            "goal_type": contract.get("goal_type"),
+            "supplier": (contract.get("supplier_name") or "").casefold(),
+            "selector": constraints.get("selector"),
+            "invoice_number": constraints.get("invoice_numbers") or [],
+            "max_count": constraints.get("cap"),
+            "due_before": [str(item) for item in constraints.get("dates") or []]
+            + [str((contract.get("filter") or {}).get("due_before", ""))],
+        }
+        for key, value in expected.items():
+            if key == "outcome":
+                continue
+            if key == "supplier":
+                ok = actual["supplier"] == str(value).casefold()
+            elif key in {"invoice_number", "due_before"}:
+                ok = str(value) in actual[key]
+            else:
+                ok = actual[key] == value
+            if not ok:
+                mismatch.append(f"{key}: expected {value}, got {actual[key]}")
+    return {"correct": not mismatch, "mismatch": mismatch}

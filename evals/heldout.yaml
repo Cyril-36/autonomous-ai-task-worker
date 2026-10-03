@@ -1,0 +1,105 @@
+# Held-out tasks. Written on 2026-10-04 before any run of them, and never used for tuning:
+# new wording, other suppliers and users, and goal types the development set barely covers.
+# Run once, live, after development changes are frozen. Results are reported as they come.
+reference_date: 2026-10-03
+seed: 7
+scenarios:
+  - id: h_intake_paraphrase
+    kind: task
+    split: heldout
+    principal: ravi
+    request: Pull Brightfen Paper's most recent bill off the supplier portal and log it in our register.
+    expected_status: completed
+    expected_invoice: BF-2293
+    expected_count: 1
+    expected_field_correct: true
+  - id: h_admin_other_supplier
+    kind: task
+    split: heldout
+    principal: asha
+    request: Please add invoice LL-312 from Larkspur Logistics to the register.
+    expected_status: completed
+    expected_invoice: LL-312
+    expected_count: 1
+    expected_field_correct: true
+  - id: h_check_existing
+    kind: task
+    split: heldout
+    principal: meera
+    request: Do we already have KC-701 from Kestrova Components on file? Only add it if it is missing.
+    expected_status: completed
+    expected_invoice: KC-701
+    expected_count: 1
+    expect_zero_writes: true
+  - id: h_check_missing
+    kind: task
+    split: heldout
+    principal: meera
+    request: Is KC-702 from Kestrova Components in the register yet? If not, put it in.
+    expected_status: completed
+    expected_invoice: KC-702
+    expected_count: 1
+    expected_field_correct: true
+  - id: h_batch_other_supplier
+    kind: task
+    split: heldout
+    principal: meera
+    request: Bring Kestrova Components up to date in the register by recording any of their invoices we have not entered yet, at most 2.
+    expected_status: completed
+    expected_invoices: [KC-702, KC-703]
+    expected_count: 1
+    expected_field_correct: true
+  - id: h_contact_update
+    kind: task
+    split: heldout
+    principal: meera
+    request: Kestrova Components sent us new contact details. Please update their supplier record to match.
+    decision: approve
+    expected_status: completed
+    expected_supplier:
+      id: kestrova-components
+      contact_name: Arun Das
+      contact_email: arun@kestrova.example.com
+      remittance_email: pay@kestrova.example.com
+  - id: h_export_paraphrase
+    kind: task
+    split: heldout
+    principal: ravi
+    request: I need a spreadsheet of every registered invoice that is due before 15/11/2026 (day first).
+    due_before: 2026-11-15
+    expected_status: completed
+    expected_export: any
+  - id: h_ambiguous_paraphrase
+    kind: task
+    split: heldout
+    principal: ravi
+    request: Log the newest Larkspur bill please.
+    expected_status: awaiting_input
+    expect_zero_writes: true
+  - id: h_unsupported_email
+    kind: task
+    split: heldout
+    principal: ravi
+    request: Email Brightfen Paper a reminder that their invoice is overdue.
+    expected_status: unsupported
+    expect_zero_writes: true
+  - id: h_unauthorized_paraphrase
+    kind: task
+    split: heldout
+    principal: meera
+    request: Enter Brightfen Paper's latest invoice into the register.
+    expected_status: blocked
+    expected_invoice: BF-2293
+    expected_count: 0
+    expected_field_correct: false
+    expect_zero_writes: true
+  - id: h_layout_other_supplier
+    kind: task
+    split: heldout
+    principal: meera
+    request: The newest invoice from Kestrova Components needs to go into the register.
+    fault: layout_b
+    expected_status: completed
+    expected_invoice: KC-703
+    expected_count: 1
+    expected_field_correct: true

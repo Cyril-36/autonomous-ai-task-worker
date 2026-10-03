@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from fastapi.responses import RedirectResponse
 
 from evals.controls import run_control
-from evals.oracle import inspect_case
+from evals.oracle import inspect_case, score_understanding
 from evals.report import render_report
 from evals.scripts import fake_script
 from sandbox.portal.app import create_app as portal_app
@@ -40,6 +40,8 @@ from worker.tools.files import WorkspaceFiles
 from worker.verify.probes import Probes
 
 SCENARIOS = Path(__file__).with_name("scenarios.yaml")
+SUITES = {"dev": SCENARIOS, "heldout": Path(__file__).with_name("heldout.yaml"),
+          "understanding": Path(__file__).with_name("understanding.yaml")}
 REPORT = Path(__file__).with_name("REPORT.md")
 LIVE_REPORT = Path(__file__).with_name("LIVE_REPORT.md")
 LIVE_TARGETED_REPORT = Path(__file__).with_name("LIVE_TARGETED_REPORT.md")
@@ -138,9 +140,20 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
             else:
                 provider = FakeProvider(fake_script(case, portal_url, register_url))
             store.create_run(run_id, case["request"], principal, provider.model)
+            understanding = case["kind"] == "understanding"
             worker = WorkerLoop(store=store, provider=provider, browser=browser,
                                 probes=probes, workspace=WorkspaceFiles(workspace),
-                                portal_url=portal_url, register_url=register_url)
+                                portal_url=portal_url, register_url=register_url,
+                                stop_after_goal=understanding)
+            if understanding:
+                started = time.monotonic()
+                try:
+                    await worker.run(run_id, max_steps=min(max_steps, 10))
+                except Exception as exc:  # noqa: BLE001 - scored as no outcome
+                    store.append_event(run_id, "error", {"code": "eval_case_error",
+                                                         "message": type(exc).__name__,
+                                                         "retryable": False})
+                return _understanding_result(case, store, run_id, time.monotonic() - started)
             try:
                 if case["kind"] == "crash":
                     if live:
@@ -206,6 +219,24 @@ async def run_case(case: dict, *, reference_date: date, live: bool = False,
             await register_task
 
 
+def _understanding_result(case: dict, store: Store, run_id: str, latency: float) -> dict:
+    events = store.events(run_id)
+    committed = [event.data["contract"] for event in events
+                 if event.type == "contract" and event.data.get("action") == "committed"]
+    status = store.get_run(run_id).status.value
+    outcome = ("committed" if committed else "question" if status == "awaiting_input"
+               else "unsupported" if status == "unsupported" else f"none ({status})")
+    scored = score_understanding(case["expect"], outcome, committed[-1] if committed else None)
+    return {"id": case["id"], "kind": "understanding", "success": scored["correct"],
+            "expected_status": case["expect"]["outcome"], "actual_status": outcome,
+            "mismatch": scored["mismatch"], "field_correct": None,
+            "false_completion": False, "unauthorized_writes": 0, "duplicates": 0,
+            "tool_calls": sum(event.type == "step" for event in events),
+            "latency_s": latency, "cost_inr": str(store.get_run(run_id).cost_inr),
+            "split": case.get("split", "understanding"), "failure": None if scored["correct"]
+            else "; ".join(scored["mismatch"]), "diagnostics": []}
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true")
@@ -213,8 +244,11 @@ async def main() -> None:
     parser.add_argument("--case", action="append", dest="case_ids")
     parser.add_argument("--model")
     parser.add_argument("--max-steps", type=int, default=60)
+    parser.add_argument("--suite", choices=sorted(SUITES), default="dev")
+    parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--out")
     arguments = parser.parse_args()
-    fixture = yaml.safe_load(SCENARIOS.read_text())
+    fixture = yaml.safe_load(SUITES[arguments.suite].read_text())
     cases, excluded = select_cases(fixture["scenarios"], live=arguments.live,
                                    limit=arguments.limit, case_ids=arguments.case_ids)
     reference_date = date.fromisoformat(str(fixture["reference_date"]))
@@ -231,22 +265,28 @@ async def main() -> None:
                 pricing.global_limit_inr, Decimal(os.environ["LIMIT_INR"])))
         ledger = Ledger(ROOT / "data" / "live-eval-ledger.db", pricing)
     results = []
-    for case in cases:
-        if arguments.live and (ledger.pricing.global_limit_inr - ledger.spent()
-                               < ledger.pricing.run_limit_inr):
-            break
-        result = await run_case(case, reference_date=reference_date,
-                                live=arguments.live, ledger=ledger, settings=settings,
-                                max_steps=arguments.max_steps)
-        results.append(result)
-        print(f"{case['id']}: {'PASS' if result['success'] else 'FAIL'} "
-              f"({result['actual_status']}; ₹{result['cost_inr']})")
+    for repeat in range(arguments.repeat):
+        for case in cases:
+            if arguments.live and (ledger.pricing.global_limit_inr - ledger.spent()
+                                   < ledger.pricing.run_limit_inr):
+                print("Stopping: the remaining budget is below one run's limit.")
+                break
+            case = {**case, "id": case["id"] + (f"#{repeat + 1}" if arguments.repeat > 1 else "")}
+            result = await run_case(case, reference_date=reference_date,
+                                    live=arguments.live, ledger=ledger, settings=settings,
+                                    max_steps=arguments.max_steps)
+            results.append(result)
+            print(f"{case['id']}: {'PASS' if result['success'] else 'FAIL'} "
+                  f"({result['actual_status']}; ₹{result['cost_inr']})"
+                  + (f" {result['failure']}" if result.get("failure") else ""), flush=True)
     report = render_report(results, model=settings.model if settings else "fake",
                            tier="live" if arguments.live else "fake",
                            reference_date=str(reference_date), seed=fixture["seed"],
                            excluded=excluded)
     target = (LIVE_FLASH_REPORT if settings and settings.model == "google/gemini-2.5-flash"
               else LIVE_TARGETED_REPORT if arguments.case_ids else LIVE_REPORT) if arguments.live else REPORT
+    if arguments.out:
+        target = Path(__file__).with_name(arguments.out)
     target.write_text(report)
     print(f"Report: {target}")
 

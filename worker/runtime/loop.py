@@ -95,7 +95,7 @@ def ready_to_finish(state: RuntimeState) -> bool:
 
 class WorkerLoop:
     def __init__(self, *, store, provider, browser, probes, workspace: WorkspaceFiles | Path | None,
-                 portal_url: str, register_url: str, trace=None):
+                 portal_url: str, register_url: str, trace=None, stop_after_goal: bool = False):
         self.store = store
         self.provider = provider
         self.browser = browser
@@ -105,6 +105,8 @@ class WorkerLoop:
         self.portal_url = portal_url
         self.register_url = register_url
         self.trace = trace
+        # evaluation of request understanding only: end the run once a goal is locked
+        self.stop_after_goal = stop_after_goal
         self.apps = Apps.load({"portal": portal_url, "register": register_url})
 
     def _emit(self, run_id: str, kind: str, data: dict) -> None:
@@ -258,6 +260,8 @@ class WorkerLoop:
                     changed_page = True
                 signal = stall.observe(name, args, progress=result.get("progress", False))
                 if result.get("pause") or result.get("terminal"):
+                    return
+                if self.stop_after_goal and state.contract is not None:
                     return
                 if signal == "reflect":
                     state.observations_text.append("Reflect on the stalled plan and choose a new action.")

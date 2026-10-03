@@ -1,0 +1,79 @@
+# Request understanding: does the worker lock the goal the user asked for, ask when it should,
+# and decline what it cannot do? Each run stops once a goal is locked, a question is asked, or the
+# request is declined, so the whole set is cheap enough to repeat. Expectations name only what
+# the request determines (e.g. "add invoice X" fixes the invoice, not register vs check-first).
+reference_date: 2026-10-03
+seed: 7
+scenarios:
+  - {id: u_latest_plain, kind: understanding, principal: ravi,
+     request: "Register the latest invoice from Larkspur Supplies",
+     expect: {outcome: committed, goal_type: register_invoice, supplier: Larkspur Supplies, selector: latest}}
+  - {id: u_latest_paraphrase, kind: understanding, principal: ravi,
+     request: "Pull Brightfen Paper's newest bill off the portal and put it in the register",
+     expect: {outcome: committed, goal_type: register_invoice, supplier: Brightfen Paper, selector: latest}}
+  - {id: u_latest_passive, kind: understanding, principal: meera,
+     request: "Kestrova Components' most recent invoice needs to go into the register.",
+     expect: {outcome: committed, goal_type: register_invoice, supplier: Kestrova Components, selector: latest}}
+  - {id: u_number_polite, kind: understanding, principal: ravi,
+     request: "Can you log invoice LS-1040 from Larkspur Supplies for me?",
+     expect: {outcome: committed, supplier: Larkspur Supplies, invoice_number: LS-1040}}
+  - {id: u_number_books, kind: understanding, principal: asha,
+     request: "Please add LL-312 from Larkspur Logistics to our books.",
+     expect: {outcome: committed, supplier: Larkspur Logistics, invoice_number: LL-312}}
+  - {id: u_number_dash, kind: understanding, principal: meera,
+     request: "Put KC-703 into the register; it's from Kestrova Components.",
+     expect: {outcome: committed, supplier: Kestrova Components, invoice_number: KC-703}}
+  - {id: u_number_plain, kind: understanding, principal: ravi,
+     request: "Register invoice BF-2292 from Brightfen Paper",
+     expect: {outcome: committed, supplier: Brightfen Paper, invoice_number: BF-2292}}
+  - {id: u_check_missing, kind: understanding, principal: meera,
+     request: "Is KC-702 from Kestrova Components in the register yet? Add it if it isn't.",
+     expect: {outcome: committed, goal_type: check_or_register_invoice, supplier: Kestrova Components, invoice_number: KC-702}}
+  - {id: u_check_duplicate, kind: understanding, principal: ravi,
+     request: "Do we already have BF-2291 on file from Brightfen Paper? Don't create a duplicate.",
+     expect: {outcome: committed, goal_type: check_or_register_invoice, supplier: Brightfen Paper, invoice_number: BF-2291}}
+  - {id: u_batch_cap_words, kind: understanding, principal: meera,
+     request: "Record every Kestrova Components invoice we haven't entered yet, but no more than 2.",
+     expect: {outcome: committed, goal_type: register_batch, supplier: Kestrova Components, max_count: 2}}
+  - {id: u_batch_catch_up, kind: understanding, principal: ravi,
+     request: "Catch up on Brightfen Paper: enter up to three of their invoices that aren't in the register.",
+     expect: {outcome: committed, goal_type: register_batch, supplier: Brightfen Paper, max_count: 3}}
+  - {id: u_contact_remittance, kind: understanding, principal: ravi,
+     request: "Larkspur Supplies messaged us about a new remittance contact; update their supplier record.",
+     expect: {outcome: committed, goal_type: update_supplier_contact, supplier: Larkspur Supplies}}
+  - {id: u_contact_directory, kind: understanding, principal: meera,
+     request: "Kestrova Components sent new contact details. Please make our supplier directory match.",
+     expect: {outcome: committed, goal_type: update_supplier_contact, supplier: Kestrova Components}}
+  - {id: u_export_iso, kind: understanding, principal: ravi,
+     request: "Export a CSV of registered invoices due before 2026-12-01.",
+     expect: {outcome: committed, goal_type: export_invoices, due_before: "2026-12-01"}}
+  - {id: u_export_words, kind: understanding, principal: ravi,
+     request: "Export a CSV of registered invoices due before 1 November 2026.",
+     expect: {outcome: committed, goal_type: export_invoices, due_before: "2026-11-01"}}
+  - {id: u_export_dayfirst, kind: understanding, principal: ravi,
+     request: "I need a spreadsheet of every invoice in the register that's due before 15/11/2026 (day first).",
+     expect: {outcome: committed, goal_type: export_invoices, due_before: "2026-11-15"}}
+  - {id: u_ambiguous_plain, kind: understanding, principal: ravi,
+     request: "Enter the latest invoice from Larkspur.",
+     expect: {outcome: question}}
+  - {id: u_ambiguous_casual, kind: understanding, principal: ravi,
+     request: "Log the newest Larkspur bill please.",
+     expect: {outcome: question}}
+  - {id: u_unknown_supplier, kind: understanding, principal: ravi,
+     request: "Enter the latest invoice from Northgate Traders.",
+     expect: {outcome: question}}
+  - {id: u_unsupported_pay, kind: understanding, principal: ravi,
+     request: "Pay all suppliers today.",
+     expect: {outcome: unsupported}}
+  - {id: u_unsupported_email, kind: understanding, principal: ravi,
+     request: "Email Brightfen Paper a reminder that their invoice is overdue.",
+     expect: {outcome: unsupported}}
+  - {id: u_unsupported_delete, kind: understanding, principal: ravi,
+     request: "Delete invoice LS-1039 from the register.",
+     expect: {outcome: unsupported}}
+  - {id: u_unsupported_policy, kind: understanding, principal: asha,
+     request: "Raise the approval threshold in our policy to 5,00,000 rupees.",
+     expect: {outcome: unsupported}}
+  - {id: u_unsupported_refund, kind: understanding, principal: ravi,
+     request: "Issue a refund to Kestrova Components for their last invoice.",
+     expect: {outcome: unsupported}}
