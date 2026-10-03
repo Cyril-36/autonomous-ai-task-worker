@@ -9,7 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from worker.contracts import Principal, RunEvent, RunStatus, RunSummary
+from worker.contracts import PendingMutation, Principal, RunEvent, RunStatus, RunSummary
 
 
 def utc_now() -> datetime:
@@ -129,6 +129,16 @@ class Store:
         with self.connect() as db:
             db.execute("INSERT OR REPLACE INTO approvals VALUES (?,?,?)",
                        (approval_id, run_id, json.dumps(_clean(data))))
+
+    def save_pending(self, pending: PendingMutation) -> None:
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO pending VALUES (?,?,?)",
+                       (pending.mutation_id, pending.run_id, pending.model_dump_json()))
+
+    def pending_for_run(self, run_id: str) -> list[PendingMutation]:
+        with self.connect() as db:
+            rows = db.execute("SELECT data_json FROM pending WHERE run_id=?", (run_id,)).fetchall()
+        return [PendingMutation.model_validate_json(row[0]) for row in rows]
 
     def approvals(self, run_id: str) -> list[dict]:
         with self.connect() as db:

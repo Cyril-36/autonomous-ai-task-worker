@@ -116,7 +116,9 @@ class RunService:
             "facts": [event.data for event in events if event.type == "fact"],
             "approvals": self.store.approvals(run_id), "question": self.store.question(run_id),
             "verification": verifications[-1] if verifications else None,
-            "pending": [], "budget": self.budget(run_id),
+            "pending": [item.model_copy(update={"form_token": "•••"})
+                        for item in self.store.pending_for_run(run_id)],
+            "budget": self.budget(run_id),
             "last_seq": events[-1].seq if events else 0,
         }
 

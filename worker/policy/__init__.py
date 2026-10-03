@@ -1,0 +1,1 @@
+"""Deterministic write safety policy."""
