@@ -692,7 +692,12 @@ class WorkerLoop:
                 screenshot = await self._capture_artifact(state)
                 return {"ok": False, "summary": decision.reason, "pause": True,
                         "screenshot": screenshot}
-            return {"ok": False, "summary": decision.reason}
+            observation = self.browser.current
+            empty = [field_label(item) for item in (observation.elements if observation else [])
+                     if item.role in FILLABLE and item.value == "" and item.name != "form_token"]
+            hint = (f" Empty fields: {', '.join(empty)}. Fill the form with fill_form, then "
+                    "submit." if empty else "")
+            return {"ok": False, "summary": decision.reason + "." + hint}
         before = await self.probes.target_by_key(target_key)
         before_values = ({key: str(before[key]) for key in fields
                           if key in before and key not in {"form_token", "version"}}
@@ -738,6 +743,10 @@ class WorkerLoop:
                     self._emit(state.run_id, "approval", payload)
             return {"ok": True, "summary": "Write reconciled as committed", "progress": True,
                     "screenshot": artifact_name}
+        if settled.retry_allowed:
+            return {"ok": False, "screenshot": artifact_name, "summary":
+                    "The save did not go through and nothing was written. Open the form again, "
+                    "fill it with fill_form (a new form starts empty), then submit."}
         return {"ok": False, "summary": settled.pending.reason or "Write not committed",
                 "screenshot": artifact_name}
 

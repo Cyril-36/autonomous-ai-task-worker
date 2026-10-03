@@ -779,3 +779,47 @@ async def test_memory_suggests_a_users_earlier_choice_but_still_asks(tmp_path):
     store.create_run("r3", "Log the newest Larkspur bill", asha, "fake")
     await worker([ambiguous]).run("r3")
     assert "suggested" not in last_question("r3")
+
+
+@pytest.mark.asyncio
+async def test_failed_save_and_empty_form_explain_what_to_do(tmp_path):
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    with connect(tmp_path / "register.db") as db:
+        db.execute("UPDATE faults SET fail_next_save=1 WHERE id=1")
+    principal = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi",
+                          role="operator")
+    browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                         register_url=register_url)
+    cookies = await browser.context.cookies(register_url)
+    session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+    probes = Probes(portal_url=portal_url, register_url=register_url, probe_key="probe-demo",
+                    register_session=session, workspace=tmp_path / "workspace")
+    store = Store(tmp_path / "worker.db")
+    store.create_run("r1", "Register the latest invoice from Larkspur Supplies", principal, "fake")
+    script = _intake_script(portal_url, register_url)
+    submit = script.index({"tool": "submit_form"})
+    # after the failed save: reopen the form and submit it without filling it
+    script = script[:submit + 1] + [
+        {"tool": "open_page", "arguments": {"app": "register", "page": "new_invoice"}},
+        {"tool": "submit_form"},
+        {"tool": "ask_user", "arguments": {"question": "?"}},
+    ]
+    try:
+        worker = WorkerLoop(store=store, provider=FakeProvider(script), browser=browser,
+                            probes=probes, workspace=WorkspaceFiles(tmp_path / "workspace"),
+                            portal_url=portal_url, register_url=register_url)
+        await worker.run("r1")
+        submits = [event.data["summary"] for event in store.events("r1")
+                   if event.type == "step" and event.data["tool"] == "submit_form"]
+        assert "nothing was written" in submits[0] and "fill it with fill_form" in submits[0]
+        assert "Empty fields" in submits[1] and "Amount" in submits[1]
+    finally:
+        await probes.close()
+        await browser.close()
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task
