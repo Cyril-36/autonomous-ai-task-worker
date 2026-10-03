@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 FILENAME = re.compile(r"^[a-z0-9_-]{1,60}\.csv$")
+EXPORT_COLUMNS = ("supplier_id", "invoice_number", "amount", "currency", "due_date")
 
 
 class WorkspaceFiles:
@@ -37,9 +38,9 @@ class WorkspaceFiles:
             raise ValueError("Invalid export filename")
         target = self._inside(f"exports/{name}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        fieldnames = list(rows[0]) if rows else []
         with target.open("w", encoding="utf-8", newline="") as stream:
-            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer = csv.DictWriter(stream, fieldnames=EXPORT_COLUMNS)
             writer.writeheader()
-            writer.writerows(rows)
+            for row in rows:
+                writer.writerow({column: row[column] for column in EXPORT_COLUMNS})
         return target

@@ -1,0 +1,1 @@
+"""Goal and verifier tests."""
