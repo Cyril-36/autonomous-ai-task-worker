@@ -67,7 +67,10 @@ export function RunView({ run }: RunViewProps) {
   const meta = statusMeta(view.status, view.status === "completed" ? verified : undefined);
   const terminal = isTerminal(view);
   const unverified = view.status === "completed" && !verified;
-  const reason = unverified
+  const shownInEvidence = view.status === "completed" && verified;
+  const reason = shownInEvidence
+    ? null
+    : unverified
     ? "The worker reported this run as completed, but no passing verification result arrived, so it is not shown as done."
     : view.statusReason
       ? (REASON_TEXT[view.statusReason] ?? readableReason(view.statusReason))

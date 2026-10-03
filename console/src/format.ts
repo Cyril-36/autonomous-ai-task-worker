@@ -110,6 +110,22 @@ export const GOAL_LABEL: Record<GoalType, string> = {
 };
 
 
+/** "invoice_number" -> "Invoice number"; ids lose their suffix ("supplier_id" -> "Supplier"). */
+export function fieldName(key: string): string {
+  const words = key.replace(/_(id|doc_id)$/, (m) => (m === "_doc_id" ? "_document" : "")).replace(/_/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Money fields are shown in rupees; everything else as given. */
+export function fieldValue(key: string, value: string): string {
+  return /amount|total/.test(key) && /^\d+(\.\d+)?$/.test(value) ? formatInr(value) : value;
+}
+
+export function sentence(text: string): string {
+  const t = text.trim();
+  return /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
 export function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }

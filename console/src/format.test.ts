@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { count, describeUrl, formatInr, readableReason, statusMeta } from "./format";
+import { count, describeUrl, fieldName, fieldValue, formatInr, readableReason, sentence, statusMeta } from "./format";
 
 describe("formatInr", () => {
   it.each([
@@ -34,6 +34,17 @@ describe("readableReason", () => {
   it("turns codes into words and leaves sentences alone", () => {
     expect(readableReason("replay_demo_only")).toBe("Replay demo only.");
     expect(readableReason("Nothing was saved.")).toBe("Nothing was saved.");
+  });
+});
+
+describe("field display", () => {
+  it("names fields and formats money", () => {
+    expect(fieldName("supplier_id")).toBe("Supplier");
+    expect(fieldName("source_doc_id")).toBe("Source document");
+    expect(fieldName("due_date")).toBe("Due date");
+    expect(fieldValue("amount", "125000.00")).toBe("₹1,25,000.00");
+    expect(fieldValue("invoice_number", "BF-2292")).toBe("BF-2292");
+    expect(sentence("Needs approval")).toBe("Needs approval.");
   });
 });
 

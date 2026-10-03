@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { Approval } from "../api/types";
+import { fieldName, fieldValue, sentence } from "../format";
 
 function useCountdown(iso: string): string {
   const [now, setNow] = useState(() => Date.now());
@@ -51,7 +52,7 @@ export function ApprovalCard({ runId, approval }: ApprovalCardProps) {
         </span>
       </div>
       <p>
-        {approval.reason} You are approving exactly these values for <strong>{approval.target_label}</strong>. If any of
+        {sentence(approval.reason)} You are approving exactly these values for <strong>{approval.target_label}</strong>. If any of
         them, the record or the policy change, this approval stops applying and it asks again.
       </p>
       <div className="table-box">
@@ -66,9 +67,9 @@ export function ApprovalCard({ runId, approval }: ApprovalCardProps) {
           <tbody>
             {approval.changes.map((c) => (
               <tr key={c.field}>
-                <td>{c.field}</td>
-                <td className="old">{c.old ?? "empty"}</td>
-                <td className="new">{c.new}</td>
+                <td>{fieldName(c.field)}</td>
+                <td className="old">{c.old ? fieldValue(c.field, c.old) : "empty"}</td>
+                <td className="new">{fieldValue(c.field, c.new)}</td>
               </tr>
             ))}
           </tbody>
