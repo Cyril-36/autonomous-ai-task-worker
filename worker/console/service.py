@@ -51,7 +51,9 @@ class RunService:
         run_id = uuid4().hex
         self.store.create_run(run_id, request.strip(), principal, self.model)
         self.store.append_event(run_id, "run_status", {
-            "status": "queued", "reason": "This is a replay preview for the console.",
+            "status": "queued", "reason": ("This is a replay preview for the console."
+                                           if self.engine == "replay"
+                                           else "Waiting for the worker to start."),
         })
         if self.engine == "replay":
             self._replay(run_id, request.strip())
