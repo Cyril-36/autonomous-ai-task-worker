@@ -1,3 +1,13 @@
 # Contract changes
 
-- 2026-10-04: removed `ToolCall` and `ToolResult` from `worker/contracts.py`. Neither was used by the backend or the console; tool calls travel as provider dicts and results as `RunEvent` step data.
+`worker/contracts.py` and `docs/INTERFACES.md` §1 are the contract between the backend and the
+console. The project rule is that both change together in one commit titled `contract: …`.
+Two changes were made in ordinary commits instead; this file records them and the commit that
+reconciles them.
+
+| Date | Change | Made in | Compatibility |
+| --- | --- | --- | --- |
+| 2026-10-04 | Removed `ToolCall` and `ToolResult` from `worker/contracts.py`. Neither was used by the backend or the console: tool calls travel as provider dicts, results as `step` event data. | `1affdc4` (ordinary commit) | No wire change. |
+| 2026-10-04 | `question` event data gained optional `candidates: string[]` and `suggested: string` (`docs/INTERFACES.md` §1; console `Question` type). `suggested` is a remembered earlier choice and is never applied automatically. | `29108ee` (ordinary commit) | Additive and optional; older clients ignore the fields. `RunEvent.data` is a dict in `contracts.py`, so no Python type changed. |
+
+Both are reconciled in the `contract:` commit that adds this table.
