@@ -379,7 +379,9 @@ class WorkerLoop:
             if isinstance(contract, GoalRejection):
                 self._emit(state.run_id, "contract", {"action": "rejected",
                                                        "reason": contract.reason})
-                if contract.code == "needs_clarification":
+                # only real ambiguity goes to the user; a goal missing something the
+                # request contains goes back to the model to fix
+                if contract.code == "needs_clarification" and contract.candidates:
                     return self._question(state, contract.reason, contract.candidates)
                 if contract.code == "unsupported":
                     self._terminal(state, RunStatus.unsupported, contract.reason)

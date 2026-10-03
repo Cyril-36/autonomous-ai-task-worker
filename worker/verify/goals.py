@@ -69,6 +69,41 @@ def _valid_extra(criterion: Criterion) -> bool:
     )
 
 
+NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+                "eight": 8, "nine": 9, "ten": 10}
+DATE_FORMATS = ("%Y-%m-%d", "%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y", "%d/%m/%Y",
+                "%d-%m-%Y")
+DATE_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}"                                   # 2026-11-01
+    r"|\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?[a-z]+\s+\d{4}"   # 1 November 2026, 15th of Nov 2026
+    r"|[a-z]+\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}"           # November 1, 2026
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{4}")                         # 15/11/2026, day first
+
+
+def numbers_in(request: str) -> set[int]:
+    """Counts the user wrote, as digits or words."""
+    text = request.casefold()
+    found = {int(item) for item in re.findall(r"\b\d{1,3}\b", text)}
+    found |= {value for word, value in NUMBER_WORDS.items() if re.search(rf"\b{word}\b", text)}
+    return found
+
+
+def dates_in(request: str) -> set[date]:
+    """Dates the user wrote, in the common written forms, read day-first when numeric."""
+    found = set()
+    for match in DATE_PATTERN.findall(request.casefold()):
+        cleaned = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", match).replace(",", "")
+        cleaned = re.sub(r"\bof\s+", "", cleaned)
+        cleaned = " ".join(cleaned.split())
+        for fmt in DATE_FORMATS:
+            try:
+                found.add(datetime.strptime(cleaned, fmt).replace(tzinfo=UTC).date())
+                break
+            except ValueError:
+                continue
+    return found
+
+
 async def commit_goal(
     proposal: GoalProposal | dict, request_text: str, probes, *, run_id: str,
 ) -> GoalContract | GoalRejection:
@@ -107,8 +142,13 @@ async def commit_goal(
     required = required_selectors.get(proposal.goal_type)
     if required and proposal.selector not in {None, required}:
         return GoalRejection("request_mismatch", f"This goal requires the {required} selector")
-    if latest_requested and proposal.selector not in {"latest", None}:
-        return GoalRejection("request_mismatch", "Latest request cannot select a fixed number")
+    if latest_requested and (
+        proposal.selector not in {"latest", None}
+        or proposal.invoice_number and proposal.invoice_number.casefold() not in request
+    ):
+        return GoalRejection("request_mismatch",
+                             "The request asks for the latest invoice; use selector latest "
+                             "rather than a number the user did not give")
     if proposal.selector == "invoice_number" and (
         not proposal.invoice_number or proposal.invoice_number.casefold() not in request
     ):
@@ -171,7 +211,7 @@ async def commit_goal(
 
     elif proposal.goal_type == GoalType.register_batch:
         cap = proposal.max_count
-        if not cap or cap < 1 or cap > 10 or not re.search(rf"\b{cap}\b", request):
+        if not cap or cap < 1 or cap > 10 or cap not in numbers_in(request):
             return GoalRejection("request_mismatch", "Explicit batch cap must appear in request")
         portal = await probes.portal_invoices(supplier_id)
         registered = await probes.register_invoices(supplier_id=supplier_id)
@@ -207,7 +247,7 @@ async def commit_goal(
         due = proposal.due_before
         if not due or not isinstance(due, date):
             return GoalRejection("request_mismatch", "Explicit due-before date required")
-        if due.isoformat() not in request and due.strftime("%d %b %Y").casefold() not in request:
+        if due not in dates_in(request):
             return GoalRejection("request_mismatch", "Export date is not in request")
         frozen_filter = {"due_before": due.isoformat()}
         if supplier_id:

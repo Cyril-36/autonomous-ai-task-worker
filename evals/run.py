@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import socket
 import sqlite3
@@ -234,7 +235,20 @@ def _understanding_result(case: dict, store: Store, run_id: str, latency: float)
             "tool_calls": sum(event.type == "step" for event in events),
             "latency_s": latency, "cost_inr": str(store.get_run(run_id).cost_inr),
             "split": case.get("split", "understanding"), "failure": None if scored["correct"]
-            else "; ".join(scored["mismatch"]), "diagnostics": []}
+            else "; ".join(scored["mismatch"]),
+            "diagnostics": [_diagnostic(event) for event in events
+                            if event.type in {"step", "contract", "question", "run_status"}][-20:]}
+
+
+def _diagnostic(event) -> str:
+    data = event.data
+    if event.type == "contract":
+        return f"contract {data.get('action')}: {data.get('reason') or ''}".strip()
+    if event.type == "question":
+        return f"question: {data.get('text')}"
+    if event.type == "run_status":
+        return f"status {data.get('status')}: {data.get('reason') or ''}"
+    return f"{data.get('tool')} {json.dumps(data.get('args', {}), ensure_ascii=False)[:200]} -> {data.get('summary')}"
 
 
 async def main() -> None:
