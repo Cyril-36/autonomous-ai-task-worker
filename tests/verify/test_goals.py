@@ -120,10 +120,10 @@ async def test_check_or_register_requires_number_selector_and_freezes_existing_r
     wrong = GoalProposal(goal_type=GoalType.check_or_register_invoice,
                          supplier="Larkspur Supplies", selector="latest",
                          invoice_number="LS-1042")
-    assert (await commit_goal(wrong, "Check LS-1042 from Larkspur Supplies", probes,
+    assert (await commit_goal(wrong, "Check LS-1042 from Larkspur Supplies and add it if missing", probes,
                               run_id="r1")).code == "request_mismatch"
     valid = wrong.model_copy(update={"selector": "invoice_number"})
-    contract = await commit_goal(valid, "Check LS-1042 from Larkspur Supplies", probes,
+    contract = await commit_goal(valid, "Check LS-1042 from Larkspur Supplies and add it if missing", probes,
                                  run_id="r1")
     assert next(item for item in contract.obligations if item.kind == "no_write").params == {
         "record_id": "7", "version": "3",

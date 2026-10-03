@@ -62,13 +62,13 @@ async def test_contact_update_resolves_the_suppliers_latest_message_by_code():
     probes = _MessageProbes([_message("msg-old", "2026-09-01"), _message("msg-new", "2026-10-02")])
     contract = await commit_goal({"goal_type": "update_supplier_contact",
                                   "supplier": "Kestrova Components"},
-                                 "Kestrova Components sent new contact details", probes, run_id="r")
+                                 "Kestrova Components sent new contact details; update our record", probes, run_id="r")
     assert not isinstance(contract, GoalRejection)
     assert [source.doc_id for source in contract.sources] == ["msg-new"]
     tied = _MessageProbes([_message("a", "2026-10-02"), _message("b", "2026-10-02")])
     rejection = await commit_goal({"goal_type": "update_supplier_contact",
                                    "supplier": "Kestrova Components"},
-                                  "Kestrova Components sent new contact details", tied, run_id="r")
+                                  "Kestrova Components sent new contact details; update our record", tied, run_id="r")
     assert rejection.code == "needs_clarification" and set(rejection.candidates) == {"a", "b"}
 
 

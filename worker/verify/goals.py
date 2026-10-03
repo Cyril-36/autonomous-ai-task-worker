@@ -80,6 +80,27 @@ DATE_PATTERN = re.compile(
     r"|\d{1,2}[/-]\d{1,2}[/-]\d{4}")                         # 15/11/2026, day first
 
 
+# The actions each goal type carries out, as people phrase them. A goal is only accepted when
+# the user's own request asks for that kind of action, so a request for something else (a
+# refund, a payment, a deletion) cannot become a write. This is a lexical check: it can refuse
+# an unusual phrasing (the worker then asks or declines), but it cannot invent a write.
+_PUT_IN = r"\b(?:in|into|to)\s+(?:our\s+|the\s+)?(?:register|books)\b"
+_RECORD = (r"(?:^|[.;:!?]\s*|\b(?:and|or|please|then|,)\s+)register\b"
+           r"|\b(?:enter|record|log|add|put|file|book|input|capture|insert)\w*\b|" + _PUT_IN)
+GOAL_ACTIONS: dict[GoalType, str] = {
+    GoalType.register_invoice: _RECORD,
+    # it may write when the invoice is missing, so the request must ask for that too
+    GoalType.check_or_register_invoice: _RECORD,
+    GoalType.register_batch: _RECORD + r"|\b(?:up to date|catch up)\b",
+    GoalType.update_supplier_contact: r"\b(?:update|change|replace|correct|match|sync)\w*\b",
+    GoalType.export_invoices: r"\b(?:export|csv|spreadsheet|download|excel)\w*\b",
+}
+
+
+def action_matches(goal_type: GoalType, request: str) -> bool:
+    return re.search(GOAL_ACTIONS[goal_type], request.casefold()) is not None
+
+
 def numbers_in(request: str) -> set[int]:
     """Counts the user wrote, as digits or words."""
     text = request.casefold()
@@ -113,6 +134,11 @@ async def commit_goal(
         except ValueError:
             return GoalRejection("unsupported", "Request does not fit a supported goal type")
     request = request_text.casefold()
+    if not action_matches(proposal.goal_type, request_text):
+        return GoalRejection("request_mismatch",
+                             f"The request does not ask to {proposal.goal_type.value.replace('_', ' ')}"
+                             "; if the user wants a different kind of action, call unsupported, "
+                             "and if it is unclear, ask the user")
     suppliers = await probes.register_suppliers()
     supplier = None
     if proposal.supplier:
