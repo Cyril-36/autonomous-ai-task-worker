@@ -188,8 +188,10 @@ async def test_model_can_mark_payment_request_unsupported(tmp_path):
     assert "Payments" in statuses[-1].data["reason"]
 
 
+@pytest.mark.parametrize("answer", ["Larkspur Supplies", "supplies",
+                                    "Not Larkspur Logistics, the other one"])
 @pytest.mark.asyncio
-async def test_ambiguous_supplier_pauses_and_answer_allows_goal_commit(tmp_path):
+async def test_ambiguous_supplier_pauses_and_answer_allows_goal_commit(tmp_path, answer):
     class ProbesWithPolicy(FakeProbes):
         async def register_policy(self):
             return {"version": 1, "threshold": "100000.00"}
@@ -211,8 +213,9 @@ async def test_ambiguous_supplier_pauses_and_answer_allows_goal_commit(tmp_path)
     assert store.get_run("r1").status == "awaiting_input"
     assert any(event.type == "question" and "Larkspur Supplies" in event.data["candidates"]
                for event in store.events("r1"))
-    await worker.run("r1", answer="Larkspur Supplies")
-    assert any(event.type == "contract" for event in store.events("r1"))
+    await worker.run("r1", answer=answer)
+    assert any(event.type == "contract" and event.data["action"] == "committed"
+               for event in store.events("r1"))
 
 
 @pytest.mark.asyncio
@@ -916,8 +919,10 @@ async def test_failed_save_and_empty_form_explain_what_to_do(tmp_path):
         await register_task
 
 
+@pytest.mark.parametrize("answer", ["Yes, register the invoice", "yes", "Yes please",
+                                    "Yes, go ahead"])
 @pytest.mark.asyncio
-async def test_unclear_action_is_confirmed_by_the_user_before_the_goal_locks(tmp_path):
+async def test_unclear_action_is_confirmed_by_the_user_before_the_goal_locks(tmp_path, answer):
     class ProbesWithPolicy(FakeProbes):
         async def register_policy(self):
             return {"version": 1, "threshold": "100000.00"}
@@ -935,8 +940,32 @@ async def test_unclear_action_is_confirmed_by_the_user_before_the_goal_locks(tmp
     question = [event.data for event in store.events("r1") if event.type == "question"][-1]
     assert store.get_run("r1").status == "awaiting_input"
     assert question["candidates"] == ["Yes, register the invoice", "No"]
+    assert "Which one did you mean" not in question["text"]
     assert not any(event.type == "contract" and event.data["action"] == "committed"
                    for event in store.events("r1"))
-    await worker.run("r1", answer="Yes, register the invoice")
+    await worker.run("r1", answer=answer)
     assert any(event.type == "contract" and event.data["action"] == "committed"
                for event in store.events("r1"))
+
+
+@pytest.mark.asyncio
+async def test_no_to_write_confirmation_ends_run_without_reasking(tmp_path):
+    class ProbesWithPolicy(FakeProbes):
+        async def register_policy(self):
+            return {"version": 1, "threshold": "100000.00"}
+
+    store = Store(tmp_path / "worker.db")
+    ravi = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi", role="operator")
+    store.create_run("r1", "Record a refund for Larkspur Supplies' latest invoice", ravi, "fake")
+    goal = {"tool": "commit_goal", "arguments": {"contract": {
+        "requested_action": "record", "goal_type": "register_invoice",
+        "supplier": "Larkspur Supplies", "selector": "latest"}}}
+    worker = WorkerLoop(store=store, provider=FakeProvider([goal, goal]), browser=None,
+                        probes=ProbesWithPolicy(), workspace=None,
+                        portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
+    await worker.run("r1")
+    await worker.run("r1", answer="No")
+    assert store.get_run("r1").status == "blocked"
+    assert len([event for event in store.events("r1") if event.type == "question"]) == 1
+    assert not any(event.type == "contract" and event.data["action"] == "committed"
+                   for event in store.events("r1"))

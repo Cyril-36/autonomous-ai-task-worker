@@ -7,6 +7,7 @@ ambiguity is resolved by the user still holds.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,11 +38,32 @@ class Memory:
                        (user_id, kind, self._key(key), value, datetime.now(UTC).isoformat()))
 
 
-def chosen_candidate(answer: str, candidates: list[str]) -> str | None:
-    """The single candidate the answer names, if exactly one is named."""
+def chosen_candidate(answer: str, candidates: list[str], *, suggested: str | None = None) -> str | None:
+    """Resolve an explicit name, a unique short name, or one excluded alternative."""
     text = answer.casefold()
-    named = [item for item in candidates if item.casefold() in text]
-    exact = [item for item in candidates if item.casefold() == text.strip()]
-    if exact:
-        return exact[0]
-    return named[0] if len(named) == 1 else None
+    named: set[str] = set()
+    excluded: set[str] = set()
+    words = {item: set(re.findall(r"[a-z]+", item.casefold())) for item in candidates}
+    for item in candidates:
+        other_words = set().union(*(part for other, part in words.items() if other != item))
+        terms = [item.casefold(), *(words[item] - other_words)]
+        for term in terms:
+            for match in re.finditer(rf"(?<!\w){re.escape(term)}(?!\w)", text):
+                prefix = text[max(0, match.start() - 12):match.start()]
+                if re.search(r"\b(?:not|no)\s+(?:the\s+)?$", prefix):
+                    excluded.add(item)
+                else:
+                    named.add(item)
+    named -= excluded
+    if len(named) == 1:
+        return next(iter(named))
+    if named:
+        return None
+    remaining = [item for item in candidates if item not in excluded]
+    if excluded and len(remaining) == 1:
+        return remaining[0]
+    if suggested in candidates and re.search(r"\bother\s+one\b", text):
+        alternatives = [item for item in candidates if item != suggested]
+        if len(alternatives) == 1:
+            return alternatives[0]
+    return None

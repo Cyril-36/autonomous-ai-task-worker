@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -162,9 +163,31 @@ class WorkerLoop:
             if state.phase == "done":
                 return
             if answer:
-                state.user_messages.append(answer)
+                pending_question = state.pending_clarification
+                if pending_question and pending_question.get("kind") == "confirmation":
+                    reply = answer.strip().casefold()
+                    if re.match(r"^(?:no\b|don't\b|do not\b|stop\b|cancel\b)", reply):
+                        state.pending_clarification = None
+                        self._terminal(state, RunStatus.blocked,
+                                       "You declined the proposed change. Nothing was saved.")
+                        return
+                    if not re.match(r"^(?:yes\b|yeah\b|yep\b|go ahead\b)", reply):
+                        self._question(state, "Please answer Yes or No before any change",
+                                       pending_question["candidates"], kind="confirmation")
+                        return
+                    state.user_messages.append(pending_question["candidates"][0])
+                    state.pending_clarification = None
+                elif pending_question and pending_question.get("candidates"):
+                    choice = self._remember_choice(state, run.principal.user_id, answer)
+                    if choice is None:
+                        self._question(state, "Please choose one supplier by name",
+                                       pending_question["candidates"],
+                                       about=pending_question.get("about"))
+                        return
+                    state.user_messages.append(choice)
+                else:
+                    state.user_messages.append(answer)
                 state.feedback.append("User answered: " + answer)
-                self._remember_choice(state, run.principal.user_id, answer)
             if self.probes:
                 decisions = await reconcile_all(self.store, run_id, self.probes)
                 if any(item.pending.state == "conflict" for item in decisions):
@@ -375,7 +398,8 @@ class WorkerLoop:
                 # request contains goes back to the model to fix
                 if contract.code == "needs_confirmation":
                     # code, not the model, asks: no write until the request is clear
-                    return self._question(state, contract.reason, contract.candidates)
+                    return self._question(state, contract.reason, contract.candidates,
+                                          kind="confirmation")
                 if contract.code == "needs_clarification" and contract.candidates:
                     return self._question(state, contract.reason, contract.candidates,
                                           about=proposal.supplier)
@@ -462,20 +486,24 @@ class WorkerLoop:
             return {"ok": False, "summary": result.summary}
         raise ValueError("Unknown tool")
 
-    def _remember_choice(self, state: RuntimeState, user_id: str, answer: str) -> None:
+    def _remember_choice(self, state: RuntimeState, user_id: str, answer: str) -> str | None:
         """Company memory: keep what this user meant, to suggest it next time."""
-        pending, state.pending_clarification = state.pending_clarification, None
-        if not pending or not pending.get("about") or self.memory is None:
-            return
-        choice = chosen_candidate(answer, pending["candidates"])
+        pending = state.pending_clarification
+        if not pending:
+            return None
+        choice = chosen_candidate(answer, pending["candidates"],
+                                  suggested=pending.get("suggested"))
         if choice:
-            self.memory.remember(user_id, "choice", pending["about"], choice)
-            self._emit(state.run_id, "fact", {
-                "key": "memory." + "_".join(pending["about"].casefold().split()),
-                "value": f"{pending['about']} means {choice}", "normalized": choice,
-                "type": "text", "observation_id": "memory", "url": "memory://user",
-                "doc_id": None, "revision": None, "field_locator": "Remembered for next time",
-                "step": state.steps})
+            state.pending_clarification = None
+            if pending.get("about") and self.memory:
+                self.memory.remember(user_id, "choice", pending["about"], choice)
+                self._emit(state.run_id, "fact", {
+                    "key": "memory." + "_".join(pending["about"].casefold().split()),
+                    "value": f"{pending['about']} means {choice}", "normalized": choice,
+                    "type": "text", "observation_id": "memory", "url": "memory://user",
+                    "doc_id": None, "revision": None, "field_locator": "Remembered for next time",
+                    "step": state.steps})
+        return choice
 
     def _invalidate_approvals(self, state: RuntimeState) -> None:
         for index, approval in enumerate(state.approvals):
@@ -621,18 +649,23 @@ class WorkerLoop:
         return matches[0]
 
     def _question(self, state: RuntimeState, question: str, candidates: list[str],
-                  about: str | None = None) -> dict:
+                  about: str | None = None, kind: str = "choice") -> dict:
         suggested = None
         if candidates:
-            question = (f"{question.rstrip('.')}. Which one did you mean: "
-                        f"{' or '.join(candidates)}?")
-            if about and self.memory:
+            if kind == "confirmation":
+                question = (f"{question.rstrip('.')}. Confirm this action: "
+                            f"{candidates[0]}? Choose Yes or No.")
+            else:
+                question = (f"{question.rstrip('.')}. Which one did you mean: "
+                            f"{' or '.join(candidates)}?")
+            if kind != "confirmation" and about and self.memory:
                 user_id = self.store.get_run(state.run_id).principal.user_id
                 remembered = self.memory.recall(user_id, "choice", about)
                 if remembered in candidates:
                     suggested = remembered
                     question += f" Last time you chose {remembered}."
-            state.pending_clarification = {"about": about, "candidates": candidates}
+            state.pending_clarification = {"kind": kind, "about": about,
+                                           "candidates": candidates, "suggested": suggested}
         question_id = uuid4().hex
         self.store.save_question(question_id, state.run_id, question)
         self.store.update_run(state.run_id, status="awaiting_input")
