@@ -1,0 +1,38 @@
+name: Checks
+
+'on':
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - name: Install backend and Chromium
+        run: |
+          uv sync --locked
+          uv run playwright install --with-deps chromium
+      - name: Lint backend
+        run: uv run ruff check .
+      - name: Test backend
+        run: uv run pytest -q
+      - name: Run scripted scenarios
+        run: uv run python -m evals.run --suite dev --out CI_REPORT.md
+      - name: Install and check console
+        working-directory: console
+        run: |
+          npm ci
+          npm test
+          npm run build

@@ -114,13 +114,11 @@ All numbers below are generated from the evaluation reports by `scripts/update_r
 
 ## Run it
 
-Requires Python 3.11+, [`uv`](https://docs.astral.sh/uv/), Node 20+ (only to rebuild the console) and Playwright Chromium.
+Requires Python 3.11+, [`uv`](https://docs.astral.sh/uv/), Node 22+, npm and Make. `make setup` installs the locked dependencies, Chromium and the console build.
 
 ```sh
-uv sync
-uv run playwright install chromium
+make setup
 cp .env.example .env          # put AICREDITS_API_KEY in .env for live runs
-(cd console && npm install && npm run build)
 make dev                      # portal :8101, register :8102, console :8100
 ```
 

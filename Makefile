@@ -1,7 +1,12 @@
 UV_CACHE_DIR ?= /private/tmp/centeralign-uv-cache
 export UV_CACHE_DIR
 
-.PHONY: test lint smoke sandbox dev eval eval-live reset-demo
+.PHONY: setup test lint smoke sandbox dev eval eval-live reset-demo
+setup:
+	uv sync --locked
+	uv run playwright install chromium
+	npm --prefix console ci
+	npm --prefix console run build
 test:
 	uv run pytest
 lint:
