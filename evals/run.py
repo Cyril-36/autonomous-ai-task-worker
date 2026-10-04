@@ -24,7 +24,7 @@ from fastapi.responses import RedirectResponse
 from evals.controls import run_control
 from evals.oracle import audit_snapshot, inspect_case, score_understanding
 from evals.report import render_report
-from evals.scripts import fake_script
+from evals.scripts import SCRIPTED_KINDS, fake_script
 from sandbox.portal.app import create_app as portal_app
 from sandbox.register.app import create_app as register_app
 from sandbox.register.db import connect
@@ -66,6 +66,14 @@ def select_cases(cases: list[dict], *, live: bool, limit: int | None,
             raise ValueError(f"Unknown or unavailable scenarios: {', '.join(sorted(missing))}")
         selected = [case for case in selected if case["id"] in case_ids]
     return (selected[:limit] if limit else selected), excluded
+
+
+def validate_fake_cases(cases: list[dict]) -> None:
+    unsupported = [case["id"] for case in cases
+                   if case["kind"] not in SCRIPTED_KINDS | {"control"}]
+    if unsupported:
+        raise ValueError("The selected suite requires --live; no fake-provider script exists for: "
+                         + ", ".join(unsupported))
 
 
 async def _serve(app):
@@ -229,7 +237,10 @@ def _understanding_result(case: dict, store: Store, run_id: str, latency: float)
     status = store.get_run(run_id).status.value
     outcome = ("committed" if committed else "question" if status == "awaiting_input"
                else "unsupported" if status == "unsupported" else f"none ({status})")
-    scored = score_understanding(case["expect"], outcome, committed[-1] if committed else None)
+    questions = [event.data for event in events if event.type == "question"]
+    scored = score_understanding(case["expect"], outcome,
+                                 committed[-1] if committed else None,
+                                 questions[-1] if questions else None)
     return {"id": case["id"], "kind": "understanding", "success": scored["correct"],
             "expected_status": case["expect"]["outcome"], "actual_status": outcome,
             "mismatch": scored["mismatch"], "field_correct": None,
@@ -268,6 +279,11 @@ async def main() -> None:
     fixture = yaml.safe_load(SUITES[arguments.suite].read_text())
     cases, excluded = select_cases(fixture["scenarios"], live=arguments.live,
                                    limit=arguments.limit, case_ids=arguments.case_ids)
+    if not arguments.live:
+        try:
+            validate_fake_cases(cases)
+        except ValueError as exc:
+            parser.error(str(exc))
     reference_date = date.fromisoformat(str(fixture["reference_date"]))
     ledger = None
     settings = None

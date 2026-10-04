@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+SCRIPTED_KINDS = {"invoice", "batch", "crash", "existing", "export", "ambiguity",
+                  "missing_source", "unsupported", "provider_failure", "stale_ref", "offsite"}
+
 
 def _invoice_steps(case: dict) -> list[dict]:
     supplier = case["supplier"]

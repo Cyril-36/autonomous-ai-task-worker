@@ -1,11 +1,12 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
 import yaml
 
-from evals.oracle import audit_snapshot, inspect_case
+from evals.oracle import audit_snapshot, inspect_case, score_understanding
 from evals.report import render_report
-from evals.run import SCENARIOS, select_cases
+from evals.run import SCENARIOS, select_cases, validate_fake_cases
 from sandbox.portal.app import init_db as init_portal
 from sandbox.register.db import init_db as init_register
 from worker.contracts import Principal
@@ -82,3 +83,22 @@ def test_live_suite_excludes_script_only_faults():
     selected, _ = select_cases(fixture["scenarios"], live=True, limit=None,
                                case_ids=["unsupported_payment"])
     assert [item["id"] for item in selected] == ["unsupported_payment"]
+
+
+def test_unscripted_fake_suites_are_rejected_before_starting_servers():
+    fixture = yaml.safe_load((SCENARIOS.parent / "understanding.yaml").read_text())
+    with pytest.raises(ValueError, match="requires --live"):
+        validate_fake_cases(fixture["scenarios"])
+
+
+def test_understanding_scorer_checks_the_question_purpose():
+    expected = {"outcome": "question", "question_kind": "confirmation"}
+    wrong = {"text": "Which supplier?", "candidates": ["Larkspur Supplies", "Larkspur Logistics"]}
+    right = {"text": "Should I register this invoice?", "candidates": ["Yes, register", "No"]}
+    assert not score_understanding(expected, "question", None, wrong)["correct"]
+    assert score_understanding(expected, "question", None, right)["correct"]
+    supplier = {"outcome": "question", "question_kind": "supplier_choice",
+                "question_candidates": ["Larkspur Supplies", "Larkspur Logistics"]}
+    irrelevant = {"text": "Choose a color", "candidates": ["Red", "Blue"]}
+    assert not score_understanding(supplier, "question", None, irrelevant)["correct"]
+    assert score_understanding(supplier, "question", None, wrong)["correct"]

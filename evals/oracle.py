@@ -215,11 +215,36 @@ def failure_category(actual: str, expected: str, events) -> str:
     return "other"
 
 
-def score_understanding(expected: dict, outcome: str, contract: dict | None) -> dict:
+def _question_kind(question: dict | None) -> str:
+    if not question:
+        return "missing"
+    text = str(question.get("text", "")).casefold()
+    candidates = [str(item).casefold() for item in question.get("candidates", [])]
+    if any(item == "no" for item in candidates) and any(item.startswith("yes") for item in candidates):
+        return "confirmation"
+    if len(candidates) > 1:
+        return "supplier_choice"
+    if "supplier" in text or "which company" in text:
+        return "supplier_identity"
+    if ("register" in text or "add" in text) and ("?" in text or "confirm" in text):
+        return "confirmation"
+    return "other"
+
+
+def score_understanding(expected: dict, outcome: str, contract: dict | None,
+                        question: dict | None = None) -> dict:
     """Compare what the worker committed to with what the request asked for."""
     mismatch = []
     if outcome != expected["outcome"]:
         return {"correct": False, "mismatch": [f"outcome {outcome}"]}
+    if outcome == "question" and expected.get("question_kind"):
+        actual_kind = _question_kind(question)
+        if actual_kind != expected["question_kind"]:
+            mismatch.append(f"question_kind: expected {expected['question_kind']}, got {actual_kind}")
+        required = {str(item).casefold() for item in expected.get("question_candidates", [])}
+        offered = {str(item).casefold() for item in (question or {}).get("candidates", [])}
+        if not required.issubset(offered):
+            mismatch.append(f"question_candidates: missing {sorted(required - offered)}")
     if outcome == "committed" and contract:
         constraints = contract.get("constraints") or {}
         actual = {
@@ -232,7 +257,7 @@ def score_understanding(expected: dict, outcome: str, contract: dict | None) -> 
             + [str((contract.get("filter") or {}).get("due_before", ""))],
         }
         for key, value in expected.items():
-            if key == "outcome":
+            if key in {"outcome", "question_kind"}:
                 continue
             if key == "supplier":
                 ok = actual["supplier"] == str(value).casefold()

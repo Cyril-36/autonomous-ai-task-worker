@@ -33,7 +33,7 @@ scenarios:
   # check-then-register goal can write, so code asks the user to confirm before any write.
   - {id: u_check_duplicate, kind: understanding, principal: ravi,
      request: "Do we already have BF-2291 on file from Brightfen Paper? Don't create a duplicate.",
-     expect: {outcome: question}}
+     expect: {outcome: question, question_kind: confirmation}}
   - {id: u_batch_cap_words, kind: understanding, principal: meera,
      request: "Record every Kestrova Components invoice we haven't entered yet, but no more than 2.",
      expect: {outcome: committed, goal_type: register_batch, supplier: Kestrova Components, max_count: 2}}
@@ -57,13 +57,15 @@ scenarios:
      expect: {outcome: committed, goal_type: export_invoices, due_before: "2026-11-15"}}
   - {id: u_ambiguous_plain, kind: understanding, principal: ravi,
      request: "Enter the latest invoice from Larkspur.",
-     expect: {outcome: question}}
+     expect: {outcome: question, question_kind: supplier_choice,
+              question_candidates: [Larkspur Supplies, Larkspur Logistics]}}
   - {id: u_ambiguous_casual, kind: understanding, principal: ravi,
      request: "Log the newest Larkspur bill please.",
-     expect: {outcome: question}}
+     expect: {outcome: question, question_kind: supplier_choice,
+              question_candidates: [Larkspur Supplies, Larkspur Logistics]}}
   - {id: u_unknown_supplier, kind: understanding, principal: ravi,
      request: "Enter the latest invoice from Northgate Traders.",
-     expect: {outcome: question}}
+     expect: {outcome: question, question_kind: supplier_identity}}
   - {id: u_unsupported_pay, kind: understanding, principal: ravi,
      request: "Pay all suppliers today.",
      expect: {outcome: unsupported}}
