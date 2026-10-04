@@ -142,7 +142,8 @@ def inspect_case(case: dict, store, run_id: str, portal_db: Path, register_db: P
         path = workspace / "exports" / case["expected_export"]
         if case["expected_export"] == "any":
             # the request names no file, so any single export the worker wrote is the export
-            found = sorted((workspace / "exports").glob("*.csv")) if (workspace / "exports").is_dir() else []
+            # exports live in a per-run folder (exports/<run>/<id>-<name>.csv)
+            found = sorted((workspace / "exports").rglob("*.csv")) if (workspace / "exports").is_dir() else []
             path = found[0] if len(found) == 1 else workspace / "exports" / "missing.csv"
         if path.is_file():
             with path.open(newline="", encoding="utf-8") as stream:

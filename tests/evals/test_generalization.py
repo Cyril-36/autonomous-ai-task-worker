@@ -102,3 +102,22 @@ def test_understanding_scores_goal_fields_and_outcomes():
     assert not scored["correct"] and any("max_count" in item for item in scored["mismatch"])
     assert score_understanding({"outcome": "question"}, "question", None)["correct"]
     assert not score_understanding({"outcome": "unsupported"}, "committed", contract)["correct"]
+
+
+def test_export_is_found_in_its_per_run_folder(tmp_path):
+    """Exports are written to exports/<run>/<id>-<name>.csv so earlier evidence is never replaced."""
+    portal, register, store = _setup(tmp_path)
+    _complete(store)
+    folder = tmp_path / "ws" / "exports" / "run-1"
+    folder.mkdir(parents=True)
+    with sqlite3.connect(register) as db:
+        rows = db.execute("SELECT supplier_id,invoice_number,amount,currency,due_date "
+                          "FROM invoices WHERE due_date<?", ("2026-11-15",)).fetchall()
+    with (folder / "a1b2-due.csv").open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["supplier_id", "invoice_number", "amount", "currency", "due_date"])
+        writer.writerows(rows)
+    case = {"id": "e", "expected_status": "completed", "expected_export": "any",
+            "due_before": "2026-11-15"}
+    result = inspect_case(case, store, "r1", portal, register, tmp_path / "ws", before=store.before)
+    assert result["export_correct"] and not result["false_completion"]

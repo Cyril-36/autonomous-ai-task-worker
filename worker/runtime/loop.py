@@ -658,8 +658,8 @@ class WorkerLoop:
         suggested = None
         if candidates:
             if kind == "confirmation":
-                question = (f"{question.rstrip('.')}. Confirm this action: "
-                            f"{candidates[0]}? Choose Yes or No.")
+                action = candidates[0].removeprefix("Yes, ")
+                question = f"{question.rstrip('.')}. Should I {action}?"
             else:
                 question = (f"{question.rstrip('.')}. Which one did you mean: "
                             f"{' or '.join(candidates)}?")

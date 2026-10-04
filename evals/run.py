@@ -265,7 +265,12 @@ def _diagnostic(event) -> str:
     return f"{data.get('tool')} {json.dumps(data.get('args', {}), ensure_ascii=False)[:200]} -> {data.get('summary')}"
 
 
-async def main() -> None:
+def exit_code(results: list[dict]) -> int:
+    """Non-zero when any scenario missed its expected outcome, so CI fails on regressions."""
+    return 0 if results and all(row["success"] for row in results) else 1
+
+
+async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--limit", type=int)
@@ -322,7 +327,8 @@ async def main() -> None:
         target = Path(__file__).with_name(arguments.out)
     target.write_text(report)
     print(f"Report: {target}")
+    return exit_code(results)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))
