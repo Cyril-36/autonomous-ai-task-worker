@@ -107,6 +107,7 @@ export const GOAL_LABEL: Record<GoalType, string> = {
   register_batch: "Register a batch of invoices",
   update_supplier_contact: "Update a supplier contact",
   export_invoices: "Export invoices",
+  sync_existing_invoice: "Correct an existing invoice from its source",
 };
 
 

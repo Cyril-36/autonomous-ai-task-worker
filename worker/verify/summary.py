@@ -68,6 +68,9 @@ def describe_outcome(contract, facts: dict, result, *, export_path: str | None =
                   if key.startswith((doc + ".contact_", doc + ".remittance_"))]
         text = f"Updated {supplier}'s contact details" + (
             ": " + ", ".join(values) + "." if values else ".")
+    elif goal == GoalType.sync_existing_invoice:
+        keys = ", ".join(source.key for source in contract.sources)
+        text = f"Corrected existing invoice {keys} for {supplier} to match its portal source."
     else:
         saved = "; ".join(_invoice(source, facts) for source in contract.sources)
         noun = "invoice" if len(contract.sources) == 1 else f"{len(contract.sources)} invoices"

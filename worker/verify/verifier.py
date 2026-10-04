@@ -98,6 +98,15 @@ async def verify(contract: GoalContract, probes, *, export_path: str | None = No
             passed = target is not None and str(target.get("version", "")) == obligation.params.get("version")
             checks.append(_check(obligation, passed, expected=obligation.params.get("version"),
                                  actual=str(target.get("version")) if target else None))
+        elif kind == "target_record":
+            target = next((row for row in saved_rows if str(row.get("id", "")) ==
+                           obligation.params.get("record_id")), None)
+            before = int(obligation.params["version"])
+            passed = target is not None and int(target.get("version", 0)) > before
+            checks.append(_check(obligation, passed,
+                                 expected=f"record {obligation.params['record_id']} updated",
+                                 actual=(f"record {target['id']} version {target['version']}"
+                                         if target else "missing")))
         elif kind == "batch_complete":
             remaining = [ref.key for ref in contract.batch_remaining]
             checks.append(_check(obligation, not remaining, expected="0 remaining",

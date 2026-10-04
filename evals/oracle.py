@@ -62,7 +62,13 @@ def audit_writes(case: dict, register_db: Path, before: dict) -> tuple[int, int]
         old = before["invoices"].get(row_id)
         if old == row:
             continue
-        if row is None or old is not None or row["invoice_number"] not in wanted:
+        expected_update = (case.get("expected_update") and old is not None and row is not None
+                           and row["invoice_number"] in wanted
+                           and all(row[key] == old[key] for key in
+                                   ("id", "supplier_id", "invoice_number", "source_doc_id",
+                                    "created_by")) and row["version"] > old["version"])
+        if not expected_update and (row is None or old is not None or
+                                    row["invoice_number"] not in wanted):
             unexpected += 1
         impersonated = old is None and row is not None and row["created_by"] != actor
         affected_suppliers = {item["supplier_id"] for item in (old, row) if item}

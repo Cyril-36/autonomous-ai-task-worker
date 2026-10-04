@@ -104,6 +104,7 @@ class GoalType(str, Enum):
     register_batch = "register_batch"
     update_supplier_contact = "update_supplier_contact"
     export_invoices = "export_invoices"
+    sync_existing_invoice = "sync_existing_invoice"
 
 
 Selector = Literal["latest", "invoice_number", "all_unregistered", "message", "filter"]
@@ -164,6 +165,7 @@ ObligationKind = Literal[
     "export_rows",
     "approval_recorded",
     "extra",
+    "target_record",
 ]
 
 

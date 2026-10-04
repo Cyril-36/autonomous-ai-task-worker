@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from sandbox.common.seed import ASSIGNMENTS, SUPPLIERS, USERS, invoice_seed
@@ -70,8 +70,11 @@ def init_db(path: Path, reference_date: date) -> None:
         fixtures = invoice_seed(reference_date)
         for number in ("LS-1039", "BF-2291", "KC-701"):
             row = next(item for item in fixtures if item["invoice_number"] == number)
+            # A source-backed correction fixture: this one existing due date is stale.
+            due_date = ((date.fromisoformat(row["due_date"]) + timedelta(days=5)).isoformat()
+                        if number == "LS-1039" else row["due_date"])
             db.execute(
                 "INSERT INTO invoices(supplier_id,invoice_number,amount,currency,due_date,source_doc_id,created_by) VALUES (?,?,?,?,?,?,?)",
                 (row["supplier_id"], number, row["amount"], row["currency"],
-                 row["due_date"], row["doc_id"], "asha"),
+                 due_date, row["doc_id"], "asha"),
             )

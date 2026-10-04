@@ -14,7 +14,7 @@ from worker.contracts import (
 )
 from worker.runtime.apps import Apps
 from worker.runtime.loop import action_line, find_by_label, ready_to_finish
-from worker.runtime.prompts import build_messages
+from worker.runtime.prompts import build_messages, describe_goal
 from worker.runtime.stall import StallDetector
 from worker.tools.registry import TOOLS, tools_for_phase, validate_call
 from worker.trace.writer import TraceWriter
@@ -96,6 +96,16 @@ def test_prompt_marks_pages_untrusted_keeps_last_three_and_shows_action_log():
     assert "<untrusted_page>Page 2</untrusted_page>" in rendered
     assert "<untrusted_page>Page 0</untrusted_page>" not in rendered
     assert "Your recent actions" in rendered and "#1 open_page" in rendered
+
+
+def test_source_backed_noop_correction_tells_worker_to_finish_without_writing():
+    contract = _contract(GoalType.sync_existing_invoice, supplier_name="Some Supplier",
+                         sources=[SourceRef(kind="invoice", doc_id="doc_a", revision="1",
+                                            supplier_id="s", key="A-1")],
+                         obligations=[Obligation(obligation_id="n", kind="no_write",
+                                                 description="Already matches source")])
+    rendered = describe_goal(contract, APPS)
+    assert "do not open the write page" in rendered
 
 
 def _observation(*elements):

@@ -73,6 +73,7 @@ type Budget = {
 };
 ```
 `RunSummary`, `Principal`, `GoalContract`, `PlanStep`, `Fact`, `Approval`, `PendingMutation`, `VerificationResult` serialize exactly as the pydantic models in `worker/contracts.py`.
+`GoalType.sync_existing_invoice` means correcting one existing register invoice to match its frozen supplier portal source. It requires approval for the existing-record change and independent read-back verification.
 `EvidenceItem.download_url` is optional and points to the authenticated CSV route for a verified export.
 
 ### Live stream — `GET /api/runs/{run_id}/stream`

@@ -69,7 +69,7 @@ GOAL_SCHEMA = {
                              "before choosing goal_type"},
         "goal_type": {"type": "string", "enum": [
             "register_invoice", "check_or_register_invoice", "register_batch",
-            "update_supplier_contact", "export_invoices",
+            "update_supplier_contact", "export_invoices", "sync_existing_invoice",
         ]},
         "supplier": {"type": "string"},
         "selector": {"type": "string", "enum": [

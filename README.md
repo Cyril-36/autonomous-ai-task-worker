@@ -181,6 +181,7 @@ Each run moves through **discover** (read-only) → **commit goal** → **execut
 The prompt and the model's tools are identical for every goal type (a test checks this). What a new task needs depends on whether it uses the existing apps:
 
 - **A new workflow on the existing apps** (for example a different goal over the portal and register): a goal type in `worker/verify/goals.py` (the actions that mean it, how its sources are resolved, its field map and its checks), its procedure in `config/apps.yaml`, and any read-only probe the verifier needs in `worker/verify/probes.py`. The loop, the prompt, the tools and the browser stay unchanged.
+  The source-backed correction workflow (`sync_existing_invoice`) is an example: it updates one existing register record to match the frozen portal invoice, requires approval, and verifies the same record and its new version.
 - **A new app** needs more, and some of it is still code today: the app's pages in `config/apps.yaml`, how the runtime signs in to it (`BrowserSession.start`), its origin in the browser allowlist, a read-only probe for verification, and the mapping from its form to the record a write targets (`WorkerLoop._submit` currently knows invoice and supplier forms). Making sign-in, origins and write targets declarative is listed under next steps.
 
 ### Reliability and safety

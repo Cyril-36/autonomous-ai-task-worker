@@ -187,6 +187,19 @@ scenarios:
     request: Register the latest invoice from Larkspur Supplies
     expected_status: awaiting_input
     expect_zero_writes: true
+  - id: sync_existing_invoice
+    kind: sync
+    principal: ravi
+    request: Correct existing invoice LS-1039 from Larkspur Supplies to match the portal.
+    supplier: Larkspur Supplies
+    invoice_number: LS-1039
+    selector: invoice_number
+    decision: approve
+    expected_status: completed
+    expected_invoice: LS-1039
+    expected_count: 1
+    expected_field_correct: true
+    expected_update: true
   - id: direct_api_authz
     kind: control
     check: direct_api_authz

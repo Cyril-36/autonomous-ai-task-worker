@@ -89,6 +89,8 @@ def test_budget_examples_and_artifact_error(tmp_path):
         assert any("Export" in example["title"] for example in examples)
         assert any(example["request"] == "Enter the latest invoice from Larkspur."
                    for example in examples)
+        assert any(example["request"].startswith("Correct existing invoice")
+                   for example in examples)
         assert client.get("/api/budget").json()["estimated"] is True
         run = client.post("/api/runs", json={"request": "Check invoice BF-2291"}).json()
         assert client.get(f"/api/runs/{run['run_id']}/artifacts/missing.png").status_code == 404

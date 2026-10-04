@@ -93,6 +93,7 @@ _NEGATION = {"not", "don't", "dont", "doesn't", "never", "without", "avoid", "st
 _FILLER = {"a", "an", "the", "their", "its", "our", "your", "this", "that", "these", "those",
            "any", "all", "every", "each", "up", "to", "of", "latest", "newest", "most",
            "recent", "last", "new", "unregistered", "missing", "outstanding", "next", "first",
+           "existing",
            "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
            "please", "back"}
 _DETERMINERS = {"a", "an", "the", "their", "its", "our", "your", "this", "that", "on", "from"}
@@ -116,6 +117,9 @@ _GOAL_RULES: dict[GoalType, dict] = {
                                       r"emails?|supplier)$")},
     GoalType.export_invoices: {"verb": re.compile(r"^(?:export|csv|spreadsheet|download|excel)"
                                                   r"(?:s|ed|ing)?$"), "self_object": True},
+    GoalType.sync_existing_invoice: {
+        "verb": re.compile(r"^(?:correct|update|change|sync)(?:s|ed|ing)?$"),
+        "object": _INVOICE_OBJECT},
 }
 CONFIRM_ACTION: dict[GoalType, str] = {
     GoalType.register_invoice: "register the invoice",
@@ -123,6 +127,7 @@ CONFIRM_ACTION: dict[GoalType, str] = {
     GoalType.register_batch: "record the invoices",
     GoalType.update_supplier_contact: "update the supplier contact details",
     GoalType.export_invoices: "export the invoices",
+    GoalType.sync_existing_invoice: "correct the existing invoice to match its portal source",
 }
 
 
@@ -171,7 +176,8 @@ def action_evidence(goal_type: GoalType, request: str) -> str:
     latest_message = request.rsplit("\n", 1)[-1].strip().casefold()
     confirmed = latest_message == f"yes, {CONFIRM_ACTION[goal_type]}"
     other_object = (goal_type in {GoalType.register_invoice, GoalType.register_batch,
-                                  GoalType.check_or_register_invoice}
+                                  GoalType.check_or_register_invoice,
+                                  GoalType.sync_existing_invoice}
                     and _OTHER_OBJECT.search(request.casefold()) is not None and not confirmed)
     unclear = denied = False
     for sentence, question in _sentences(request):
@@ -265,6 +271,11 @@ async def commit_goal(
         except ValueError:
             return GoalRejection("unsupported", "Request does not fit a supported goal type")
     request = request_text.casefold()
+    if proposal.goal_type == GoalType.sync_existing_invoice and not re.search(
+        r"\b(?:match (?:the )?(?:portal|source)|from (?:the )?portal|"
+        r"with (?:the )?source)\b", request):
+        return GoalRejection("request_mismatch", "This goal only corrects a record from "
+                             "its supplier portal source")
     evidence = action_evidence(proposal.goal_type, request_text)
     if evidence == "none":
         return GoalRejection("request_mismatch",
@@ -311,6 +322,7 @@ async def commit_goal(
         GoalType.register_batch: "all_unregistered",
         GoalType.update_supplier_contact: "message",
         GoalType.export_invoices: "filter",
+        GoalType.sync_existing_invoice: "invoice_number",
     }
     required = required_selectors.get(proposal.goal_type)
     if required and proposal.selector not in {None, required}:
@@ -326,7 +338,8 @@ async def commit_goal(
         not proposal.invoice_number or proposal.invoice_number.casefold() not in request
     ):
         return GoalRejection("request_mismatch", "Invoice number must appear in request")
-    if proposal.goal_type in {GoalType.register_invoice, GoalType.check_or_register_invoice}:
+    if proposal.goal_type in {GoalType.register_invoice, GoalType.check_or_register_invoice,
+                              GoalType.sync_existing_invoice}:
         requested_numbers = set(_INVOICE_NUMBER.findall(request.upper()))
         proposed_number = proposal.invoice_number.upper() if proposal.invoice_number else None
         if len(requested_numbers) > 1:
@@ -352,9 +365,12 @@ async def commit_goal(
     if supplier:
         obligations.append(_obligation("supplier_resolved", "Supplier resolves to exactly one record"))
 
-    if proposal.goal_type in {GoalType.register_invoice, GoalType.check_or_register_invoice}:
+    if proposal.goal_type in {GoalType.register_invoice, GoalType.check_or_register_invoice,
+                              GoalType.sync_existing_invoice}:
         if proposal.goal_type == GoalType.check_or_register_invoice and not proposal.invoice_number:
             return GoalRejection("request_mismatch", "Check requires an invoice number")
+        if proposal.goal_type == GoalType.sync_existing_invoice and not proposal.invoice_number:
+            return GoalRejection("request_mismatch", "Correction requires an invoice number")
         portal = await probes.portal_invoices(supplier_id)
         if proposal.selector == "latest" or (latest_requested and not proposal.invoice_number):
             if not portal:
@@ -384,6 +400,15 @@ async def commit_goal(
         field_map = INVOICE_FIELDS
         prior = [row for row in await probes.register_invoices(supplier_id=supplier_id)
                  if row["invoice_number"] == chosen["invoice_number"]]
+        if proposal.goal_type == GoalType.sync_existing_invoice:
+            if len(prior) != 1:
+                return GoalRejection("blocked", "Exactly one existing invoice is required "
+                                     "for source-backed correction")
+            if dates_in(request) and chosen["due_date"] not in {
+                value.isoformat() for value in dates_in(request)
+            }:
+                return GoalRejection("request_mismatch", "Requested date differs from "
+                                     "the portal source")
         obligations.extend([
             _obligation("record_count", "Exactly one saved invoice for supplier and number"),
             _obligation("record_fields", "Saved fields match the frozen source"),
@@ -392,6 +417,23 @@ async def commit_goal(
             obligations.append(_obligation("no_write", "Existing record remains unchanged",
                                            {"record_id": str(prior[0].get("id", "")),
                                             "version": str(prior[0].get("version", ""))}))
+        if proposal.goal_type == GoalType.sync_existing_invoice:
+            existing = prior[0]
+            record_id = str(existing.get("id", ""))
+            before_version = str(existing.get("version", ""))
+            if not record_id or not before_version:
+                return GoalRejection("blocked", "Existing record has no stable identity")
+            if all(str(existing.get(field)) == str(chosen.get(field)) for field in
+                   ("supplier_id", "invoice_number", "amount", "currency", "due_date")):
+                obligations.append(_obligation("no_write", "Already matched record remains "
+                                               "unchanged", {"record_id": record_id,
+                                                             "version": before_version}))
+            else:
+                obligations.extend([
+                    _obligation("target_record", "Corrected the same existing record",
+                                {"record_id": record_id, "version": before_version}),
+                    _obligation("approval_recorded", "Existing-record change was approved"),
+                ])
 
     elif proposal.goal_type == GoalType.register_batch:
         cap = proposal.max_count

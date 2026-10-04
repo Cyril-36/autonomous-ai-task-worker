@@ -19,6 +19,8 @@ GOAL_TYPES = {
     GoalType.register_batch: "record every not-yet-recorded invoice of one supplier, up to a cap",
     GoalType.update_supplier_contact: "update a supplier's contact details from a message they sent",
     GoalType.export_invoices: "export recorded invoices that match a filter to a CSV file",
+    GoalType.sync_existing_invoice: "correct one existing register invoice to match its "
+                                    "frozen supplier portal source, with approval",
 }
 
 SYSTEM = """You are an AI worker. You complete the user's request by operating company apps in a
@@ -75,7 +77,10 @@ def describe_goal(contract, apps) -> str:
     if contract.field_map:
         lines.append("Field map (form field <- document label): " + ", ".join(
             f"{item.target_field} <- {item.source_label}" for item in contract.field_map))
-    if procedure:
+    if procedure and any(item.kind == "no_write" for item in contract.obligations):
+        lines.append("The existing record already matches the frozen source; do not open the write "
+                     "page. Finish after the read-back check.")
+    elif procedure:
         steps = []
         if procedure.get("read"):
             steps.append(f"read each source at {procedure['read']}(id=<document id>)")

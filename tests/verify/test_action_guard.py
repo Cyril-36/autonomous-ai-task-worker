@@ -8,7 +8,8 @@ from worker.verify.goals import CONFIRM_ACTION, action_evidence
 
 EVALS = Path(__file__).resolve().parents[2] / "evals"
 WRITING_GOALS = (GoalType.register_invoice, GoalType.register_batch,
-                 GoalType.check_or_register_invoice, GoalType.update_supplier_contact)
+                 GoalType.check_or_register_invoice, GoalType.update_supplier_contact,
+                 GoalType.sync_existing_invoice)
 
 
 def _understanding():

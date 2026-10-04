@@ -105,6 +105,9 @@ def create_app(
              "notes": "Ask for clarification"},
             {"title": "Export due invoices", "request": "Export invoices due before 2026-11-01",
              "notes": "Create a CSV after matching the register filter"},
+            {"title": "Correct an existing invoice",
+             "request": "Correct existing invoice LS-1039 from Larkspur Supplies to match the portal.",
+             "notes": "Bring one saved record back to its source with approval"},
         ]
 
     @app.get("/api/budget")

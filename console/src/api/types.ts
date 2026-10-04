@@ -77,7 +77,8 @@ export type GoalType =
   | "check_or_register_invoice"
   | "register_batch"
   | "update_supplier_contact"
-  | "export_invoices";
+  | "export_invoices"
+  | "sync_existing_invoice";
 
 export interface SourceRef {
   app: "portal";

@@ -38,12 +38,19 @@ def check_mutation(state, intent: MutationIntent) -> GateDecision:
     goal = state.contract.goal_type
     allowed_path = (
         bool(re.fullmatch(r"/invoices(?:/\d+)?", parsed.path)) if goal in {
-            GoalType.register_invoice, GoalType.check_or_register_invoice, GoalType.register_batch
+            GoalType.register_invoice, GoalType.check_or_register_invoice, GoalType.register_batch,
+            GoalType.sync_existing_invoice,
         } else bool(re.fullmatch(r"/suppliers/[a-z0-9-]+", parsed.path))
         if goal == GoalType.update_supplier_contact else False
     )
     if not allowed_path:
         return _deny("path_blocked", "Write path does not match the locked goal")
+    if goal == GoalType.sync_existing_invoice:
+        target = next((item for item in state.contract.obligations
+                       if item.kind == "target_record"), None)
+        if (target is None or parsed.path != f"/invoices/{target.params['record_id']}"
+                or str(intent.target_version) != target.params["version"]):
+            return _deny("path_blocked", "Correction must update the frozen existing record")
     if not intent.form_token or intent.fields.get("form_token") != intent.form_token:
         return _deny("not_a_mutation", "A current form token is required")
     if any(p.state == "dispatching" and p.target_key == intent.target_key for p in state.pending):

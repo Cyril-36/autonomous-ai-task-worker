@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 SCRIPTED_KINDS = {"invoice", "batch", "crash", "existing", "export", "ambiguity",
-                  "missing_source", "unsupported", "provider_failure", "stale_ref", "offsite"}
+                  "missing_source", "unsupported", "provider_failure", "stale_ref", "offsite",
+                  "sync"}
 
 
 def _invoice_steps(case: dict) -> list[dict]:
@@ -55,6 +56,31 @@ def fake_script(case: dict) -> list[dict]:
             {"tool": "commit_goal", "arguments": {"contract": {
                 "goal_type": "check_or_register_invoice", "supplier": case["supplier"],
                 "selector": "invoice_number", "invoice_number": case["invoice_number"]}}},
+            {"tool": "finish", "arguments": {"summary": "Ready for verification"}},
+        ]
+    if kind == "sync":
+        number = case["invoice_number"]
+        doc = number.lower()
+        return [
+            {"tool": "commit_goal", "arguments": {"contract": {
+                "goal_type": "sync_existing_invoice", "supplier": case["supplier"],
+                "selector": "invoice_number", "invoice_number": number}}},
+            {"tool": "open_page", "arguments": {"app": "portal", "page": "invoice", "id": doc}},
+            {"tool": "record_facts", "arguments": {
+                "labels": ["Invoice number", "Amount", "Due date", "Currency"]}},
+            {"tool": "open_page", "arguments": {"app": "register", "page": "invoices"}},
+            {"tool": "browser_click", "target": number},
+            {"tool": "browser_click", "target": "Edit"},
+            {"tool": "fill_form", "arguments": {"fields": [
+                {"label": "Supplier", "fact": "goal.supplier"},
+                {"label": "Invoice number", "fact": f"{doc}.invoice_number"},
+                {"label": "Amount", "fact": f"{doc}.amount"},
+                {"label": "Due date", "fact": f"{doc}.due_date"},
+                {"label": "Currency", "fact": f"{doc}.currency"},
+                {"label": "Source document", "fact": f"{doc}.document_id"},
+            ]}},
+            {"tool": "submit_form"},
+            {"tool": "submit_form"},
             {"tool": "finish", "arguments": {"summary": "Ready for verification"}},
         ]
     if kind == "export":

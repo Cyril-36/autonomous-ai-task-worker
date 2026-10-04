@@ -102,3 +102,11 @@ def test_summary_for_failure_check_only_export_and_batch():
                       supplier_id="larkspur-supplies", key="LS-1043")
     batch = _contract(goal_type=GoalType.register_batch, batch_remaining=[extra])
     assert "Left for later because of the cap: LS-1043." in describe_outcome(batch, {}, _result())
+
+
+def test_summary_for_source_backed_correction_names_the_existing_record():
+    correction = _contract(goal_type=GoalType.sync_existing_invoice,
+                           obligations=[Obligation(obligation_id="target", kind="target_record",
+                                                   description="corrected")])
+    assert describe_outcome(correction, {}, _result()).startswith(
+        "Corrected existing invoice LS-1042 for Larkspur Supplies to match its portal source.")
