@@ -270,6 +270,12 @@ def exit_code(results: list[dict]) -> int:
     return 0 if results and all(row["success"] for row in results) else 1
 
 
+def report_path(out: str) -> Path:
+    """A bare name goes next to the other reports in evals/; any other path is used as given."""
+    path = Path(out).expanduser()
+    return path if path.is_absolute() or path.parent != Path(".") else Path(__file__).with_name(out)
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true")
@@ -281,6 +287,9 @@ async def main() -> int:
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--out")
     arguments = parser.parse_args()
+    out = report_path(arguments.out) if arguments.out else None
+    if out is not None and not out.parent.is_dir():
+        parser.error(f"--out folder does not exist: {out.parent}")
     fixture = yaml.safe_load(SUITES[arguments.suite].read_text())
     cases, excluded = select_cases(fixture["scenarios"], live=arguments.live,
                                    limit=arguments.limit, case_ids=arguments.case_ids)
@@ -323,8 +332,8 @@ async def main() -> int:
                            excluded=excluded)
     target = (LIVE_FLASH_REPORT if settings and settings.model == "google/gemini-2.5-flash"
               else LIVE_TARGETED_REPORT if arguments.case_ids else LIVE_REPORT) if arguments.live else REPORT
-    if arguments.out:
-        target = Path(__file__).with_name(arguments.out)
+    if out is not None:
+        target = out
     target.write_text(report)
     print(f"Report: {target}")
     return exit_code(results)
