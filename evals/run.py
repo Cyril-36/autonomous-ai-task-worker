@@ -5,14 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import socket
 import sqlite3
 import tempfile
 import time
 from dataclasses import replace
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -306,11 +304,7 @@ async def main() -> int:
         settings = replace(Settings.from_env(), model=resolve_live_model(arguments.model))
         if not settings.api_key:
             raise SystemExit("AICREDITS_API_KEY must be configured locally for live eval")
-        pricing = load_pricing()
-        if os.getenv("LIMIT_INR"):
-            pricing = replace(pricing, global_limit_inr=min(
-                pricing.global_limit_inr, Decimal(os.environ["LIMIT_INR"])))
-        ledger = Ledger(spending_ledger_path(ROOT / "data"), pricing)
+        ledger = Ledger(spending_ledger_path(ROOT / "data"), load_pricing())
     results = []
     for repeat in range(arguments.repeat):
         for case in cases:

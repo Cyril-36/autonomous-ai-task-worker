@@ -24,7 +24,12 @@ COPY worker worker
 COPY evals evals
 RUN uv sync --locked --no-dev
 COPY --from=console /app/console/dist console/dist
+# run as an unprivileged user (uid 1000, as hosted platforms such as Hugging Face expect);
+# only the data folder is writable
+RUN useradd --create-home --uid 1000 worker && mkdir -p data && chown worker:worker data
+USER worker
 ENV BIND_HOST=0.0.0.0 \
-    WORKER_ENGINE=live
+    WORKER_ENGINE=live \
+    HOME=/home/worker
 EXPOSE 8100 8101 8102
 CMD ["python", "-m", "scripts.dev"]

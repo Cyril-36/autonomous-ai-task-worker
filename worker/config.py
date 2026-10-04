@@ -45,10 +45,14 @@ def load_pricing(path: Path = ROOT / "config" / "pricing.toml") -> Pricing:
         )
         for name, values in raw["models"].items()
     }
+    global_limit = Decimal(str(raw["global_limit_inr"]))
+    if os.getenv("LIMIT_INR"):
+        # a deployment or an eval may lower the total cap, never raise it
+        global_limit = min(global_limit, Decimal(os.environ["LIMIT_INR"]))
     return Pricing(
         source=raw["source"],
         date=raw["date"],
-        global_limit_inr=Decimal(str(raw["global_limit_inr"])),
+        global_limit_inr=global_limit,
         run_limit_inr=Decimal(str(raw["run_limit_inr"])),
         models=models,
     )

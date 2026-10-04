@@ -32,3 +32,10 @@ def test_prices_and_limits_are_decimal():
     assert pricing.global_limit_inr == Decimal(60)
     assert pricing.run_limit_inr == Decimal(4)
     assert pricing.models["google/gemini-2.5-flash"].input_per_million == Decimal("30.36")
+
+
+def test_limit_inr_can_lower_but_not_raise_the_cap(monkeypatch):
+    monkeypatch.setenv("LIMIT_INR", "10")
+    assert load_pricing().global_limit_inr == Decimal(10)
+    monkeypatch.setenv("LIMIT_INR", "500")
+    assert load_pricing().global_limit_inr == Decimal(60)
