@@ -11,6 +11,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def spending_ledger_path(data_dir: Path) -> Path:
+    """One durable ledger for console and evaluation calls; demo resets preserve it."""
+    return data_dir / "live-eval-ledger.db"
+
+
 @dataclass(frozen=True)
 class ModelPrice:
     input_per_million: Decimal

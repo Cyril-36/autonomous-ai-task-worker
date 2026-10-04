@@ -28,7 +28,7 @@ from evals.scripts import fake_script
 from sandbox.portal.app import create_app as portal_app
 from sandbox.register.app import create_app as register_app
 from sandbox.register.db import connect
-from worker.config import ROOT, Settings, load_pricing
+from worker.config import ROOT, Settings, load_pricing, spending_ledger_path
 from worker.contracts import Approval, Principal
 from worker.llm.fake import FakeProvider
 from worker.llm.ledger import Ledger
@@ -280,7 +280,7 @@ async def main() -> None:
         if os.getenv("LIMIT_INR"):
             pricing = replace(pricing, global_limit_inr=min(
                 pricing.global_limit_inr, Decimal(os.environ["LIMIT_INR"])))
-        ledger = Ledger(ROOT / "data" / "live-eval-ledger.db", pricing)
+        ledger = Ledger(spending_ledger_path(ROOT / "data"), pricing)
     results = []
     for repeat in range(arguments.repeat):
         for case in cases:

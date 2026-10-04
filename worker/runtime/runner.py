@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from worker.config import Settings, load_pricing
+from worker.config import Settings, load_pricing, spending_ledger_path
 from worker.contracts import TERMINAL_STATUSES
 from worker.llm.ledger import Ledger
 from worker.llm.provider import Provider
@@ -18,7 +18,7 @@ class LiveRunner:
     def __init__(self, store, settings: Settings):
         self.store = store
         self.settings = settings
-        self.ledger = Ledger(store.path, load_pricing())
+        self.ledger = Ledger(spending_ledger_path(store.path.parent), load_pricing())
         self.sessions: dict[str, tuple[BrowserSession, Probes, Provider]] = {}
 
     async def __call__(self, run_id: str, answer: str | None = None) -> None:
