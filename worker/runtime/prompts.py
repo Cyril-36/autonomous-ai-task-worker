@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 
 from worker.contracts import GoalType
+from worker.runtime.plan import write_page
 
 GOAL_TYPES = {
     GoalType.register_invoice: "enter one supplier invoice in the system of record "
@@ -87,9 +88,7 @@ def describe_goal(contract, apps) -> str:
         if procedure.get("write") == "workspace.exports":
             steps.append("write the file with files_write")
         elif procedure.get("write"):
-            write_id = ("(id=" + str(contract.supplier_id) + ")"
-                        if procedure.get("write_id") == "supplier" else "")
-            steps.append(f"enter its values in the form at {procedure['write']}{write_id}")
+            steps.append(f"enter its values in the form at {write_page(contract, procedure)}")
         lines.append("Procedure: " + ", then ".join(steps) + ".")
     lines.append("Checks that must pass: " + "; ".join(
         item.description for item in contract.obligations))

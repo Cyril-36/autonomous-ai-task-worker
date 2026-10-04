@@ -110,3 +110,13 @@ def test_summary_for_source_backed_correction_names_the_existing_record():
                                                    description="corrected")])
     assert describe_outcome(correction, {}, _result()).startswith(
         "Corrected existing invoice LS-1042 for Larkspur Supplies to match its portal source.")
+
+
+def test_write_pages_that_take_a_record_id_get_it_from_the_goal():
+    from worker.runtime.prompts import describe_goal
+    sync = _contract(goal_type=GoalType.sync_existing_invoice, obligations=[
+        Obligation(obligation_id="t", kind="target_record", description="same record",
+                   params={"record_id": "7", "version": "1"})])
+    assert "register.invoice_edit(id=7)" in describe_goal(sync, APPS)
+    assert any("register.invoice_edit(id=7)" in step["text"]
+               for step in goal_plan(sync, APPS, _state()))

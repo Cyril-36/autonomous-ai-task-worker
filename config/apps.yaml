@@ -30,4 +30,4 @@ procedures:
   register_batch: {read: portal.invoice, write: register.new_invoice}
   update_supplier_contact: {read: portal.message, write: register.supplier_edit, write_id: supplier}
   export_invoices: {write: workspace.exports}
-  sync_existing_invoice: {read: portal.invoice, write: register.invoice_edit}
+  sync_existing_invoice: {read: portal.invoice, write: register.invoice_edit, write_id: record}

@@ -340,6 +340,11 @@ class WorkerLoop:
         if name == "open_page":
             url = self.apps.url(args["app"], args["page"], args.get("id"))
             if self.browser.page.url == url and self.browser.current is not None:
+                status = getattr(self.browser, "last_navigation_status", None)
+                if status and status >= 400:
+                    return {"ok": False, "progress": False, "summary":
+                            f"{args['app']}.{args['page']} answered {status}: no such page. "
+                            "Opening it again will not help; check the id the goal gives."}
                 return {"ok": False, "summary": "Already on this page; use its current observation.",
                         "progress": False}
             await self.browser.navigate(url)
@@ -558,6 +563,10 @@ class WorkerLoop:
             self._emit(state.run_id, "fact", {**fact.model_dump(mode="json"), "step": state.steps})
 
     async def _record_facts(self, state: RuntimeState, args: dict) -> dict:
+        if args.get("observation_id") and args["observation_id"] not in state.observations:
+            return {"ok": False, "summary": f"Unknown observation id {args['observation_id']}. "
+                                            "Leave observation_id out to use the latest page "
+                                            "with a document."}
         if args.get("observation_id"):
             observation = state.observations.get(args["observation_id"])
         else:

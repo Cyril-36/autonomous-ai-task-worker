@@ -16,11 +16,23 @@ def _target(source) -> dict[str, str]:
     return target
 
 
+def write_page(contract, procedure: dict) -> str:
+    """The write page with the id the goal fixes: the supplier, or the existing record."""
+    page = procedure.get("write", "")
+    kind = procedure.get("write_id")
+    if kind == "supplier" and contract.supplier_id:
+        return f"{page}(id={contract.supplier_id})"
+    if kind == "record":
+        record = next((item.params["record_id"] for item in contract.obligations
+                       if item.params.get("record_id")), None)
+        return f"{page}(id={record})" if record else page
+    return page
+
+
 def goal_plan(contract, apps, state, *, verified: bool = False) -> list[dict]:
     procedure = apps.procedure(contract.goal_type.value) if apps else {}
     read, write = procedure.get("read", "the source page"), procedure.get("write", "")
-    write_page = write + (f"(id={contract.supplier_id})"
-                          if procedure.get("write_id") == "supplier" else "")
+    target_page = write_page(contract, procedure)
     labels = {item.source_label for item in contract.field_map}
     committed = [item.target_key for item in state.pending if item.state == "committed"]
     steps: list[tuple[str, bool]] = []
@@ -34,7 +46,7 @@ def goal_plan(contract, apps, state, *, verified: bool = False) -> list[dict]:
             seen = {fact.field_locator for fact in state.facts.values()
                     if fact.doc_id == source.doc_id}
             steps.append((f"Read {source.key} at {read}", labels <= seen))
-            steps.append((f"Enter {source.key} in {write_page}", _target(source) in committed))
+            steps.append((f"Enter {source.key} in {target_page}", _target(source) in committed))
     steps.append(("Check the result by reading it back", verified))
     first_open = next((index for index, (_, done) in enumerate(steps) if not done), None)
     return [{"text": text, "status": "done" if done else

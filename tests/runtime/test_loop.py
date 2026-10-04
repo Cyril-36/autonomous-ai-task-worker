@@ -982,3 +982,36 @@ async def test_no_to_write_confirmation_ends_run_without_reasking(tmp_path):
     assert len([event for event in store.events("r1") if event.type == "question"]) == 1
     assert not any(event.type == "contract" and event.data["action"] == "committed"
                    for event in store.events("r1"))
+
+
+@pytest.mark.asyncio
+async def test_retrying_a_page_that_failed_reports_the_failure_again(tmp_path):
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    principal = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi",
+                          role="operator")
+    browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                         register_url=register_url)
+    store = Store(tmp_path / "worker.db")
+    store.create_run("r1", "Correct invoice LS-1039", principal, "fake")
+    bad = {"tool": "open_page", "arguments": {"app": "register", "page": "invoice_edit",
+                                              "id": "ls-1039"}}
+    try:
+        worker = WorkerLoop(store=store, provider=FakeProvider([
+            bad, bad, {"tool": "record_facts", "arguments": {
+                "labels": ["Amount"], "observation_id": "not-a-real-id"}},
+            {"tool": "ask_user", "arguments": {"question": "?"}}]),
+            browser=browser, probes=None, workspace=None,
+            portal_url=portal_url, register_url=register_url)
+        await worker.run("r1")
+        steps = [event.data["summary"] for event in store.events("r1") if event.type == "step"]
+        assert "no such page" in steps[0] and "no such page" in steps[1]
+        assert "Unknown observation id" in steps[2]
+    finally:
+        await browser.close()
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task
