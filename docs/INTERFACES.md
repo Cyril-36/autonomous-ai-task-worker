@@ -2,7 +2,7 @@
 
 The console (`console/`) and the backend (`worker/`, `sandbox/`, `evals/`, `config/`) were built in parallel against this contract. Types live in `worker/contracts.py`; this file fixes the wire format.
 
-- **§1 is frozen.** Both sides build against it. Change it only by editing this file and `worker/contracts.py` together and telling the other side.
+- **§1 is frozen.** Both sides build against it. Change it only by editing this file and `worker/contracts.py` together.
 - §2–§3 are backend-internal and may be refined; keep them in sync here.
 
 All JSON uses snake_case. Datetimes are ISO 8601 UTC with `Z`. Money is a decimal **string** with two places (`"48250.00"`), never a float.

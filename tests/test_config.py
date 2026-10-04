@@ -29,6 +29,6 @@ def test_console_and_live_evals_share_the_preserved_spending_ledger(tmp_path):
 
 def test_prices_and_limits_are_decimal():
     pricing = load_pricing()
-    assert pricing.global_limit_inr == Decimal(50)
+    assert pricing.global_limit_inr == Decimal(60)
     assert pricing.run_limit_inr == Decimal(4)
     assert pricing.models["google/gemini-2.5-flash"].input_per_million == Decimal("30.36")

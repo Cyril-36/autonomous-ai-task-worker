@@ -6,7 +6,9 @@ An AI worker that takes a plain-language request, does the work in a real browse
 
 The worker works out the goal, finds the invoice on the supplier portal, copies its values, enters them in the internal register as the signed-in user, pauses for approval when company policy requires it, recovers if a save times out, and then verifies the saved record against the source before calling it done.
 
-**Demo video:** [DEMO VIDEO LINK]
+**Demo video:** [docs/media/demo.mp4](docs/media/demo.mp4) (1 min 45 s, 1080p, real speed, live model calls)
+
+![A verified invoice intake: the read-back checks and captures of the source invoice and the saved record](docs/screenshots/02-verified-intake.png)
 
 Everything runs locally against two sandbox apps of a fictional company, Halden Traders: a supplier portal (`:8101`) and an internal invoice register (`:8102`). The browser actions, the model's decisions, the permission checks and the saved data are real; the company and its records are made up.
 
@@ -14,12 +16,12 @@ Everything runs locally against two sandbox apps of a fictional company, Halden 
 
 All numbers below are generated from the evaluation reports by `scripts/update_readme_metrics.py`; none are typed by hand. Live runs use `google/gemini-2.5-flash-lite` through AICredits.
 
-- **Development pass, live: 15/15 tasks** in one full pass, with every write audited: 0 false completions, 0 unauthorized writes, 0 unexpected writes, 0 duplicates ([report](evals/LIVE_DEV_AUDITED.md)). Earlier passes on this set: 6/15 before the generalization work, then 11/15 and 14/15 as general fixes landed.
-- **Invoice correction (a sixth goal type, added after that pass): passes live**, approved and verified on the same record and its new version ([report](evals/LIVE_SYNC_CHECK.md)). Its first live run failed: the edit page needs the register record id, which the goal did not show, so the model guessed the document id. That was fixed as a general rule (the manifest declares which id a write page takes, and the goal and plan show it) before the passing run. It has one live run, so treat it as checked, not measured.
-- **Held-out tasks, live: 9/11**, run once on frozen code, with 0 false completions and 0 duplicates. That run used the earlier scorer, which audited writes only in the scenarios that expected none, so its write counts are weaker evidence than the development pass above. These were written before any run and never used for tuning: new wording, other suppliers, the admin account, a batch, a contact update needing approval. The two misses were general feedback gaps (the goal did not show a supplier id; a page without a form gave a vague error). They were fixed afterwards and both passed on a post-fix recheck ([report](evals/LIVE_HELDOUT_RECHECK.md)); the held-out result stays 9/11.
+- **Development pass, live, on the final code: 16/16 tasks and 11/11 guard controls**, with every write audited: 0 false completions, 0 unauthorized writes, 0 unexpected writes, 0 duplicates, ₹3.19 for 27 scenarios ([report](evals/LIVE_DEV_FINAL.md)). Earlier passes on this set: 6/15 before the generalization work, then 11/15, 14/15 and 15/15 ([report](evals/LIVE_DEV_AUDITED.md)) as general fixes landed. The sixteenth task is invoice correction, a sixth goal type added after the 15/15 pass. Its first live run failed: the edit page needs the register record id, which the goal did not show, so the model guessed the document id. That was fixed as a general rule (the manifest declares which id a write page takes, and the goal and plan show it); it then passed a single check ([report](evals/LIVE_SYNC_CHECK.md)) and again in this pass.
+- **Held-out tasks, live: 9/11 on the first run**, on frozen code, with 0 false completions and 0 duplicates. These tasks were written before any run and are never tuned on: new wording, other suppliers, the admin account, a batch, a contact update needing approval. That run used the earlier scorer, which audited writes only in refusal cases. Its two misses were general feedback gaps (the goal did not show a supplier id; a page without a form gave a vague error) and were fixed as general rules.
+- **Held-out tasks, live, second run on the final code: 10/11** under the audited scorer: 0 false completions, 0 unauthorized, 0 unexpected and 0 duplicate writes, ₹1.52 ([report](evals/LIVE_HELDOUT_FINAL.md)). The miss is the contact update: Flash-Lite asked a question instead of proceeding, the known weakness below. Because the first run's misses informed fixes, this run is not strictly unseen; the first run's 9/11 is the clean held-out number.
 - **Request understanding, live: 24/24 on the latest pass**, over 24 requests including paraphrases, unseen supplier names, and ambiguous and unsupported requests (earlier passes: 24/24, 23/24, 22/24, 21/24; the recurring miss was contact-update requests that Flash Lite declined). Since the latest pass, a request that only asks to check ("Do we already have BF-2291 on file?") is expected to get a confirmation question, because the check-then-register goal can write. This set was used to find bugs (it started at 15/24), so it counts as development data, not held-out.
 - **Safety: 11/11 guard controls; in the audited development pass, 0 unauthorized, 0 unexpected and 0 duplicate writes.** Two reviews tightened the scorer: it now snapshots the register before every run and audits every scenario, judges every write against the user running the task (not the record's original author), and counts a completed run with any unexpected or unauthorized write as a false completion. The audited development pass made no edits to existing records and no writes under another user's name, so its result is unchanged under the stricter rules. Earlier write counts predate the audit. One earlier development pass reported a false completion that was a scorer error (it required the file name `due.csv`, which the request never mentions).
-- Total live spend for all development and evaluation runs: about ₹40, tracked by the local ledger. On the current design a task takes 3 to 8 model calls (7 for a typical invoice) and costs ₹0.05 to ₹0.3.
+- Total live spend for all development, evaluation and demo runs: about ₹46. The cap was ₹50 and was raised to ₹60 for the final held-out rerun and the demo recording. Spend is tracked by the local ledger ([cost breakdown](docs/RETROSPECTIVE.md#what-the-model-spend-went-on)). On the current design a task takes 3 to 8 model calls (7 for a typical invoice) and costs ₹0.05 to ₹0.3.
 
 <!-- EVAL_METRICS_START -->
 ### Scripted fake model (free, deterministic)
@@ -34,10 +36,25 @@ All numbers below are generated from the evaluation reports by `scripts/update_r
 | Unexpected writes | 0/32 |
 | Duplicate records | 0/32 |
 | Tool calls | 110/32 runs |
-| Latency | 10.84 s/32 runs |
+| Latency | 11.17 s/32 runs |
 | Settled cost | ₹0.000000/32 scenarios |
 
-### Development pass, live
+### Development pass, live, final code
+
+| Metric | Result |
+| --- | ---: |
+| Task success | 16/16 |
+| Control pass | 11/11 |
+| Field correctness | 10/11 |
+| False completions | 0/27 |
+| Unauthorized writes | 0/27 |
+| Unexpected writes | 0/27 |
+| Duplicate records | 0/27 |
+| Tool calls | 114/27 runs |
+| Latency | 148.51 s/27 runs |
+| Settled cost | ₹3.185976/27 scenarios |
+
+### Development pass, live, before the correction goal and final fixes
 
 | Metric | Result |
 | --- | ---: |
@@ -52,7 +69,7 @@ All numbers below are generated from the evaluation reports by `scripts/update_r
 | Latency | 165.58 s/26 runs |
 | Settled cost | ₹3.661012/26 scenarios |
 
-### Held-out tasks, live, run once (writes audited only in refusal cases)
+### Held-out tasks, live, first run (writes audited only in refusal cases)
 
 | Metric | Result |
 | --- | ---: |
@@ -66,6 +83,22 @@ All numbers below are generated from the evaluation reports by `scripts/update_r
 | Tool calls | 169/11 runs |
 | Latency | 196.85 s/11 runs |
 | Settled cost | ₹5.370053/11 scenarios |
+
+### Held-out tasks, live, second run on the final code
+
+| Metric | Result |
+| --- | ---: |
+| Task success | 10/11 |
+| Control pass | 0/0 |
+| Field correctness | 6/6 |
+| False completions | 0/11 |
+| Unauthorized writes | 0/11 |
+| Unexpected writes | 0/11 |
+| Duplicate records | 0/11 |
+| Task success, heldout | 10/11 |
+| Tool calls | 58/11 runs |
+| Latency | 74.12 s/11 runs |
+| Settled cost | ₹1.520384/11 scenarios |
 
 ### Request understanding, live, latest pass
 
@@ -133,6 +166,17 @@ Open <http://127.0.0.1:8100> and sign in with a sandbox account:
 
 Passwords can be changed with `RAVI_PASSWORD`, `MEERA_PASSWORD` and `ASHA_PASSWORD` in `.env`.
 
+### With Docker
+
+```sh
+cp .env.example .env          # put AICREDITS_API_KEY in .env
+docker compose up --build     # console :8100, portal :8101, register :8102
+```
+
+The image builds the console, installs Chromium and runs all three apps; data lives in the `worker-data` volume (`docker compose down -v` resets it). The container keeps its own spending ledger, so its meter does not include spend made outside it.
+
+### Tests and evaluation
+
 ```sh
 make test                                   # full backend suite, no API key needed
 make eval                                   # scripted fake-model scenarios, free
@@ -141,7 +185,23 @@ uv run python -m evals.run --live --suite heldout --out LIVE_HELDOUT.md
 uv run python -m evals.run --live --suite understanding --repeat 2 --out LIVE_UNDERSTANDING_X2.md
 ```
 
-Live runs stop when the local spending ledger cannot reserve another run (`config/pricing.toml`).
+Live runs stop when the local spending ledger cannot reserve another run (`config/pricing.toml`). `uv run python -m scripts.record_demo` re-records the demo video and screenshots against a running `make dev` (about ₹1).
+
+## Screenshots
+
+| | |
+| --- | --- |
+| ![Sign-in with sandbox accounts](docs/screenshots/01-sign-in.png) | ![Approval card showing the exact change to an existing record](docs/screenshots/03-approval.png) |
+| Sign in as a sandbox user; the worker acts with that user's permissions. | Changing an existing record waits for approval of the exact values. |
+| ![A request that is unclear gets a question instead of a guess](docs/screenshots/05-question.png) | ![A verified correction with read-back checks](docs/screenshots/04-verified-correction.png) |
+| An unclear request gets a question; "No" ends the run with nothing saved. | The correction verified on the same record and its new version. |
+
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): component, run-lifecycle, write-path, evaluation and deployment diagrams.
+- [docs/DESIGN.md](docs/DESIGN.md): the design and the reasoning behind each part.
+- [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md): what was built, where the model spend went, what a larger API budget would buy, LLM-as-judge, and what I would do differently.
+- [docs/INTERFACES.md](docs/INTERFACES.md): the console API contract.
 
 ## How it works
 
@@ -209,7 +269,7 @@ The prompt and the model's tools are identical for every goal type (a test check
 - Source documents appear on the portal as labelled fields; the register uses ordinary HTML forms without JavaScript autosave.
 - One worker process handles one run at a time.
 - The sandbox apps and their data are fictional; no real company system, credential or payment is involved.
-- The spending limit (₹50 total, ₹4 per run) is an estimate computed before each call and settled from the gateway's reported cost; it is not a provider-enforced ceiling.
+- The spending limit (₹60 total, raised from ₹50 at the end; ₹4 per run) is an estimate computed before each call and settled from the gateway's reported cost; it is not a provider-enforced ceiling.
 
 ## Known limitations
 
@@ -226,7 +286,7 @@ The prompt and the model's tools are identical for every goal type (a test check
 - Multi-worker queue with leases, and provider-side budget enforcement.
 - Declarative app connectors: sign-in, allowed origins and write targets described in the manifest instead of code, so a new app needs no code change.
 - More goal types (payment proposals with approval, three-way matching) added as data plus probes.
-- Larger held-out sets with several repeats per task to measure variance properly.
+- Larger held-out sets with several repeats per task to measure variance properly, and an LLM judge for question quality and summary faithfulness ([details](docs/RETROSPECTIVE.md#llm-as-judge-how-i-would-add-it)).
 
 ## Models, APIs and frameworks
 
@@ -249,5 +309,7 @@ sandbox/          supplier portal and invoice register
 evals/            scenarios, held-out and understanding sets, oracle, reports
 console/          operator console (React)
 config/           app manifest, prices and limits
-docs/DESIGN.md    design and the reasoning behind it
+scripts/          dev server, sandbox server, README metrics, demo recorder
+docs/             architecture, design, retrospective, screenshots, demo video
+Dockerfile        one image with the worker, the sandbox apps and Chromium
 ```

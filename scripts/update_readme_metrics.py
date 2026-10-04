@@ -26,7 +26,7 @@ def update_readme(readme: Path, fake: Path, live: Path,
     if original.count(START) != 1 or original.count(END) != 1:
         raise ValueError("README metric markers must each appear once")
     sections = [(fake, "Scripted fake model (free, deterministic)"),
-                (live, "Development pass, live")] + list(extra or [])
+                (live, "Development pass, live, final code")] + list(extra or [])
     generated = "\n\n".join(_metrics(path, label) for path, label in sections)
     before, rest = original.split(START, 1)
     _, after = rest.split(END, 1)
@@ -36,8 +36,10 @@ def update_readme(readme: Path, fake: Path, live: Path,
 EVALS = ROOT / "evals"
 
 if __name__ == "__main__":
-    update_readme(ROOT / "README.md", EVALS / "REPORT.md", EVALS / "LIVE_DEV_AUDITED.md", [
-        (EVALS / "LIVE_HELDOUT.md", "Held-out tasks, live, run once (writes audited only in refusal cases)"),
+    update_readme(ROOT / "README.md", EVALS / "REPORT.md", EVALS / "LIVE_DEV_FINAL.md", [
+        (EVALS / "LIVE_DEV_AUDITED.md", "Development pass, live, before the correction goal and final fixes"),
+        (EVALS / "LIVE_HELDOUT.md", "Held-out tasks, live, first run (writes audited only in refusal cases)"),
+        (EVALS / "LIVE_HELDOUT_FINAL.md", "Held-out tasks, live, second run on the final code"),
         (EVALS / "LIVE_UNDERSTANDING_GUARD.md", "Request understanding, live, latest pass"),
         (EVALS / "LIVE_UNDERSTANDING_X2.md", "Request understanding, live, two earlier repeats"),
         (EVALS / "LIVE_REPORT.md", "Before generalization: development pass, live"),

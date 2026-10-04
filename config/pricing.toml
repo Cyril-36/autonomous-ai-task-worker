@@ -1,6 +1,6 @@
 source = "https://aicredits.in/models"
 date = "2026-10-03"
-global_limit_inr = "50"
+global_limit_inr = "60"
 run_limit_inr = "4"
 
 [models."google/gemini-2.5-flash"]

@@ -79,7 +79,7 @@ Then `begin_pending` writes a `PendingMutation` (`state=dispatching`) to `worker
 
 **Each model call reserves its worst-case cost before it is sent.**
 
-`Ledger.reserve` (`worker/llm/ledger.py`) estimates from the serialized request size plus `max_tokens`, refuses calls that would exceed the run (₹4) or global (₹50) limit, and `Ledger.settle` records the gateway's reported cost. Timeouts keep the full reservation. This is an estimated local limit, not a provider guarantee.
+`Ledger.reserve` (`worker/llm/ledger.py`) estimates from the serialized request size plus `max_tokens`, refuses calls that would exceed the run (₹4) or global (₹60; ₹50 until the final runs) limit, and `Ledger.settle` records the gateway's reported cost. Timeouts keep the full reservation. This is an estimated local limit, not a provider guarantee.
 
 ## 8. Evaluation
 
