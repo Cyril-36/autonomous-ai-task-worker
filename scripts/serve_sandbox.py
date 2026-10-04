@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
+
+# 127.0.0.1 locally; the container sets 0.0.0.0 so its published ports are reachable.
+HOST = os.getenv("BIND_HOST", "127.0.0.1")
 
 
 def commands() -> list[list[str]]:
     return [
         [sys.executable, "-m", "uvicorn", "sandbox.portal.app:app",
-         "--host", "127.0.0.1", "--port", "8101"],
+         "--host", HOST, "--port", "8101"],
         [sys.executable, "-m", "uvicorn", "sandbox.register.app:app",
-         "--host", "127.0.0.1", "--port", "8102"],
+         "--host", HOST, "--port", "8102"],
     ]
 
 

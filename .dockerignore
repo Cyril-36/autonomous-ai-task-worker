@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+.venv
+**/__pycache__
+**/node_modules
+console/dist
+data
+artifacts
+.playwright-mcp
+.pytest_cache
+.ruff_cache

@@ -7,7 +7,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from scripts.serve_sandbox import commands, run
+from scripts.serve_sandbox import HOST, commands, run
 from worker.config import ROOT
 
 
@@ -16,7 +16,7 @@ def main() -> None:
     os.environ.setdefault("WORKER_ENGINE", "live")
     app_commands = commands() + [[
         sys.executable, "-m", "uvicorn", "worker.console.app:app",
-        "--host", "127.0.0.1", "--port", "8100",
+        "--host", HOST, "--port", "8100",
     ]]
     run(app_commands)
 

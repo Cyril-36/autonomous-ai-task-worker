@@ -1,0 +1,18 @@
+services:
+  worker:
+    build: .
+    image: task-worker
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      # console, supplier portal, register; bound to this machine only
+      - "127.0.0.1:8100:8100"
+      - "127.0.0.1:8101:8101"
+      - "127.0.0.1:8102:8102"
+    volumes:
+      - worker-data:/app/data
+    shm_size: 1gb
+
+volumes:
+  worker-data:

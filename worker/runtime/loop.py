@@ -107,14 +107,23 @@ def ready_to_finish(state: RuntimeState) -> bool:
 
 
 CONTENT_BOX = """() => {
+  // block elements span the full width, so measure what is drawn: text and form controls
   let right = 0, bottom = 0;
-  for (const el of document.body.querySelectorAll('*')) {
-    const r = el.getBoundingClientRect();
-    if (r.width && r.height && getComputedStyle(el).visibility !== 'hidden') {
+  const add = (r) => {
+    if (r.width && r.height) {
       right = Math.max(right, r.right + window.scrollX);
       bottom = Math.max(bottom, r.bottom + window.scrollY);
     }
+  };
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.textContent.trim()) continue;
+    range.selectNodeContents(node);
+    add(range.getBoundingClientRect());
   }
+  document.body.querySelectorAll('input:not([type=hidden]), select, textarea, button, img')
+    .forEach((el) => add(el.getBoundingClientRect()));
   return right && bottom ? {right, bottom} : null;
 }"""
 
