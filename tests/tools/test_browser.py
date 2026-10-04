@@ -11,7 +11,7 @@ async def test_snapshot_captures_docs_and_hides_password():
           <h1>Invoice</h1><article data-doc-id="d1" data-revision="2" data-kind="invoice">
           <dl><dt>Amount</dt><dd>₹48,250.00</dd></dl></article>
           <form action="/invoices" method="post"><label>Amount <input name="amount" value="48250.00"></label>
-          <input type="hidden" name="form_token" value="abc">
+          <input type="hidden" name="form_token" value="private-form-token-abc-123">
           <label>Password <input type="password" name="password" value="secret-123"></label>
           <button>Save</button></form>
         """)
@@ -19,10 +19,10 @@ async def test_snapshot_captures_docs_and_hides_password():
         assert observation.documents[0].doc_id == "d1"
         assert observation.documents[0].fields[0].value == "₹48,250.00"
         assert "secret-123" not in observation.model_dump_json()
-        assert "abc" not in observation.model_dump_json()
+        assert "private-form-token-abc-123" not in observation.model_dump_json()
         save = next(item.ref for item in observation.elements if item.name == "Save")
         captured = await session.capture_form(save)
-        assert captured["fields"]["form_token"] == "abc"
+        assert captured["fields"]["form_token"] == "private-form-token-abc-123"
         assert "password" not in captured["fields"]
         assert captured["secret_fields"] == ["password"]
         await session.page.set_content("<h1>Different page</h1>")

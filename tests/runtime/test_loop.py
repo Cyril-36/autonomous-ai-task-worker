@@ -13,7 +13,15 @@ from sandbox.register.app import create_app as register_app
 from sandbox.register.db import connect
 from tests.verify.util import FakeProbes
 from worker.console.service import RunService
-from worker.contracts import Approval, Element, Fact, FactType, Observation, Principal
+from worker.contracts import (
+    Approval,
+    ApprovalStatus,
+    Element,
+    Fact,
+    FactType,
+    Observation,
+    Principal,
+)
 from worker.llm.fake import FakeProvider
 from worker.llm.provider import ProviderResponse
 from worker.policy.approvals import decide_approval
@@ -475,6 +483,11 @@ async def test_contact_update_requires_approval_and_verifies_source(tmp_path):
         tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
     register_url, register_server, register_task = await _serve(register_app(
         tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    with connect(tmp_path / "register.db") as db:
+        db.execute("UPDATE suppliers SET contact_name='Previous Contact', "
+                   "contact_email='old@larkspur.example.com', "
+                   "remittance_email='old-remit@larkspur.example.com' "
+                   "WHERE id='larkspur-supplies'")
     principal = Principal(user_id="ravi", email="ravi@example.com",
                           display_name="Ravi", role="operator")
     browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
@@ -502,17 +515,47 @@ async def test_contact_update_requires_approval_and_verifies_source(tmp_path):
                 ("contact_name", "Contact name"), ("contact_email", "Contact email"),
                 ("remittance_email", "Remittance email")]]}},
         {"tool": "submit_form"},
+        {"tool": "fill_form", "arguments": {"fields": [
+            {"label": label, "fact": f"msg-larkspur.{key}"} for key, label in [
+                ("contact_name", "Contact name"), ("contact_email", "Contact email"),
+                ("remittance_email", "Remittance email")]]}},
+        {"tool": "submit_form"},
         {"tool": "submit_form"},
         {"tool": "finish", "arguments": {"summary": "Done"}},
     ]
-    worker = WorkerLoop(store=store, provider=FakeProvider(script), browser=browser,
+    provider = FakeProvider(script)
+    worker = WorkerLoop(store=store, provider=provider, browser=browser,
                         probes=probes, workspace=WorkspaceFiles(tmp_path / "workspace"),
                         portal_url=portal_url, register_url=register_url)
     try:
         await worker.run("r1")
         assert store.get_run("r1").status == "awaiting_approval"
         approval = Approval.model_validate(store.approvals("r1")[0])
+        old = {change.field: change.old for change in approval.changes}
+        assert old["contact_name"] == "Previous Contact"
+        assert old["contact_email"] == "old@larkspur.example.com"
+        assert old["remittance_email"] == "old-remit@larkspur.example.com"
         approved = decide_approval(approval, "approve", "ravi@example.com")
+        store.save_approval(approved.approval_id, "r1", approved.model_dump(mode="json"))
+        await probes.close()
+        await browser.close()
+        browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                             register_url=register_url)
+        cookies = await browser.context.cookies(register_url)
+        session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+        probes = Probes(portal_url=portal_url, register_url=register_url,
+                        probe_key="probe-demo", register_session=session,
+                        workspace=tmp_path / "workspace", store=store)
+        worker = WorkerLoop(store=store, provider=provider, browser=browser,
+                            probes=probes, workspace=WorkspaceFiles(tmp_path / "workspace"),
+                            portal_url=portal_url, register_url=register_url)
+        await worker.run("r1")
+        approvals = [Approval.model_validate(item) for item in store.approvals("r1")]
+        assert store.get_run("r1").status == "awaiting_approval"
+        assert len(approvals) == 2
+        assert approvals[0].status == ApprovalStatus.invalidated
+        assert approvals[1].status == ApprovalStatus.pending
+        approved = decide_approval(approvals[1], "approve", "ravi@example.com")
         store.save_approval(approved.approval_id, "r1", approved.model_dump(mode="json"))
         await worker.run("r1")
         assert store.get_run("r1").status == "completed", [
@@ -695,6 +738,54 @@ async def test_submit_form_after_an_approval_pause_saves_the_approved_values(tmp
         with connect(tmp_path / "register.db") as db:
             assert db.execute("SELECT COUNT(*) FROM invoices WHERE invoice_number='BF-2292'"
                               ).fetchone()[0] == 1
+    finally:
+        await probes.close()
+        await browser.close()
+        portal_server.should_exit = True
+        register_server.should_exit = True
+        await portal_task
+        await register_task
+
+
+@pytest.mark.asyncio
+async def test_policy_change_before_submit_requires_new_threshold_approval(tmp_path):
+    portal_url, portal_server, portal_task = await _serve(portal_app(
+        tmp_path / "portal.db", reference_date=date(2026, 10, 3), probe_key="probe-demo"))
+    register_url, register_server, register_task = await _serve(register_app(
+        tmp_path / "register.db", reference_date=date(2026, 10, 3)))
+    principal = Principal(user_id="ravi", email="ravi@example.com", display_name="Ravi",
+                          role="operator")
+    browser = await BrowserSession.start("r1", principal, portal_url=portal_url,
+                                         register_url=register_url)
+    cookies = await browser.context.cookies(register_url)
+    session = next(item["value"] for item in cookies if item["name"] == "reg_session")
+    probes = Probes(portal_url=portal_url, register_url=register_url, probe_key="probe-demo",
+                    register_session=session, workspace=tmp_path / "workspace")
+    store = Store(tmp_path / "worker.db")
+    store.create_run("r1", "Register the latest invoice from Larkspur Supplies", principal, "fake")
+
+    class ChangedPolicyProvider(FakeProvider):
+        changed = False
+
+        async def complete(self, **kwargs):
+            if self.script and self.script[0].get("tool") == "submit_form" and not self.changed:
+                with connect(tmp_path / "register.db") as db:
+                    db.execute("UPDATE policy SET threshold='40000.00',version=2 WHERE id=1")
+                self.changed = True
+            return await super().complete(**kwargs)
+
+    try:
+        worker = WorkerLoop(store=store,
+                            provider=ChangedPolicyProvider(_intake_script(portal_url, register_url)),
+                            browser=browser, probes=probes,
+                            workspace=WorkspaceFiles(tmp_path / "workspace"),
+                            portal_url=portal_url, register_url=register_url)
+        await worker.run("r1")
+        assert store.get_run("r1").status == "awaiting_approval"
+        approval = Approval.model_validate(store.approvals("r1")[0])
+        assert approval.policy_version == 2
+        rows = await probes.register_invoices(supplier_id="larkspur-supplies")
+        assert not any(row["invoice_number"] == "LS-1042" for row in rows)
     finally:
         await probes.close()
         await browser.close()

@@ -180,6 +180,14 @@ class WorkerLoop:
                 self._terminal(state, RunStatus.blocked,
                                "The requested change was rejected. Nothing was saved.")
                 return
+            fresh_browser = bool(self.browser and self.browser.page.url == "about:blank"
+                                 and state.observations)
+            if fresh_browser and any(item.status == ApprovalStatus.approved
+                                     for item in state.approvals):
+                self._invalidate_approvals(state)
+                state.feedback.append("The browser restarted and the approved form token is no "
+                                      "longer current. Refill this form from saved facts, then "
+                                      "submit it for a fresh approval before saving.")
             if any(item.status == ApprovalStatus.approved for item in state.approvals):
                 state.feedback.append("Approval applies to the current form only. Click its "
                                       "existing Save control; do not navigate or change fields.")
@@ -469,6 +477,16 @@ class WorkerLoop:
                 "doc_id": None, "revision": None, "field_locator": "Remembered for next time",
                 "step": state.steps})
 
+    def _invalidate_approvals(self, state: RuntimeState) -> None:
+        for index, approval in enumerate(state.approvals):
+            if approval.status not in {ApprovalStatus.pending, ApprovalStatus.approved}:
+                continue
+            invalidated = approval.model_copy(update={"status": ApprovalStatus.invalidated})
+            state.approvals[index] = invalidated
+            payload = invalidated.model_dump(mode="json")
+            self.store.save_approval(invalidated.approval_id, state.run_id, payload)
+            self._emit(state.run_id, "approval", payload)
+
     def _refresh_plan(self, state: RuntimeState, *, verified: bool = False) -> None:
         """Re-derive the locked goal's plan from evidence; emit it only when it changed."""
         if state.contract is None:
@@ -649,6 +667,11 @@ class WorkerLoop:
     async def _submit(self, state: RuntimeState, ref: str) -> dict:
         if state.phase != "execute" or state.contract is None:
             return {"ok": False, "summary": "Business writes require a locked goal"}
+        current_policy = await self.probes.register_policy()
+        if current_policy.get("version") != state.policy.get("version"):
+            state.feedback.append("The register policy changed. Recheck approval against its "
+                                  "current threshold and version before saving.")
+        state.policy = current_policy
         form = await self.browser.capture_form(ref)
         fields = form["fields"]
         source = next((item for item in state.contract.sources
@@ -676,6 +699,10 @@ class WorkerLoop:
             target_key=target_key, target_version=int(fields["version"]) if "version" in fields else None,
             source=source,
         )
+        before = await self.probes.target_by_key(target_key) if target_key else None
+        before_values = ({key: str(before[key]) for key in fields
+                          if key in before and key not in {"form_token", "version"}}
+                         if before else None)
         decision = check_mutation(state, intent)
         self._emit(state.run_id, "gate", {
             "step": state.steps, **decision.model_dump(mode="json"),
@@ -683,8 +710,11 @@ class WorkerLoop:
                          "target_label": ", ".join(target_key.values()) if target_key else ""},
         })
         if not decision.allowed:
-            if decision.code == "needs_approval":
-                approval = create_approval(intent, decision.reason, int(state.policy["version"]))
+            if decision.code in {"needs_approval", "approval_invalid"}:
+                if decision.code == "approval_invalid":
+                    self._invalidate_approvals(state)
+                approval = create_approval(intent, decision.reason, int(state.policy["version"]),
+                                           before_values=before_values)
                 state.approvals.append(approval)
                 payload = approval.model_dump(mode="json")
                 self.store.save_approval(approval.approval_id, state.run_id, payload)
@@ -701,10 +731,6 @@ class WorkerLoop:
             hint = (f" Empty fields: {', '.join(empty)}. Fill the form with fill_form, then "
                     "submit." if empty else "")
             return {"ok": False, "summary": decision.reason + "." + hint}
-        before = await self.probes.target_by_key(target_key)
-        before_values = ({key: str(before[key]) for key in fields
-                          if key in before and key not in {"form_token", "version"}}
-                         if before else None)
         pending = begin_pending(self.store, intent, before_values=before_values,
                                 before_version=before.get("version") if before else None)
         state.pending.append(pending)
