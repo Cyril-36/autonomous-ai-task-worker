@@ -6,7 +6,7 @@ An AI worker that takes a plain-language request, does the work in a real browse
 
 The worker works out the goal, finds the invoice on the supplier portal, copies its values, enters them in the internal register as the signed-in user, pauses for approval when company policy requires it, recovers if a save times out, and then verifies the saved record against the source before calling it done.
 
-**Live demo:** <http://15.252.104.254> (sign in as `ravi@example.com` / `ravi-demo`; each task makes live model calls, and this deployment stops new runs at a ₹10 cap)
+**Live demo:** <https://15-252-104-254.sslip.io> (sign in as `ravi@example.com` / `ravi-demo`; each task makes live model calls, and this deployment stops new runs at a ₹10 cap)
 
 **Demo video:** [docs/media/demo.mp4](docs/media/demo.mp4) (1 min 45 s, 1080p, real speed, live model calls)
 
@@ -179,7 +179,7 @@ The image builds the console, installs Chromium and runs all three apps; data li
 
 ### Hosted demo
 
-The live demo runs this image on one AWS EC2 `t3.small` in Mumbai (Amazon Linux 2023), started by [`deploy/aws/user-data.sh`](deploy/aws/user-data.sh): it clones this repository, builds the image and serves the console on port 80. Only port 80 is open; the portal and register stay inside the container. `LIMIT_INR=10` caps model spend for the deployment, and the demo data resets only when the instance is replaced. It is plain HTTP on an Elastic IP; a domain with HTTPS is a next step. Evidence links to the sandbox apps point at `127.0.0.1` and do not open from the hosted demo; the read-back checks and captures do.
+The live demo runs this image on one AWS EC2 `t3.small` in Mumbai (Amazon Linux 2023), started by [`deploy/aws/user-data.sh`](deploy/aws/user-data.sh): it clones this repository, builds the image, and puts [Caddy](https://caddyserver.com) in front for HTTPS with a Let's Encrypt certificate on the Elastic IP's [sslip.io](https://sslip.io) name. Only ports 80 (redirects to HTTPS) and 443 are open; the portal and register stay inside the container. `LIMIT_INR=10` caps model spend for the deployment, and the demo data resets only when the instance is replaced. Evidence links to the sandbox apps point at `127.0.0.1` and do not open from the hosted demo; the read-back checks and captures do.
 
 ### Tests and evaluation
 

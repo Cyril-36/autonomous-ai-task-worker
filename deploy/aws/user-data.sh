@@ -1,6 +1,7 @@
 #!/bin/bash
 # EC2 user data for the public demo (Amazon Linux 2023, t3.small, 20 GB gp3).
-# The security group opens only port 80. Replace the key placeholder before launching;
+# The security group opens ports 80 and 443. Caddy serves HTTPS with a Let's Encrypt certificate for
+# the Elastic IP's sslip.io name and redirects HTTP. Replace the key placeholder before launching;
 # the key then lives only in /opt/app.env on the instance (mode 600).
 set -euxo pipefail
 dnf install -y docker git
@@ -14,4 +15,6 @@ LLM_MODEL=google/gemini-2.5-flash-lite
 LIMIT_INR=10
 ENV
 docker build -t task-worker /opt/app
-docker run -d --name task-worker --restart unless-stopped -p 80:8100 --env-file /opt/app.env --shm-size 1g -v worker-data:/app/data task-worker
+docker network create web
+docker run -d --name task-worker --network web --restart unless-stopped --env-file /opt/app.env --shm-size 1g -v worker-data:/app/data task-worker
+docker run -d --name caddy --network web --restart unless-stopped -p 80:80 -p 443:443 -v caddy-data:/data caddy:2 caddy reverse-proxy --from 15-252-104-254.sslip.io --to task-worker:8100
