@@ -8,11 +8,12 @@ from worker.verify.probes import Probes
 @pytest.mark.asyncio
 async def test_workspace_probe_keeps_empty_csv_header_and_approval_state(tmp_path):
     store = Store(tmp_path / "worker.db")
-    WorkspaceFiles(tmp_path / "workspace").write_csv("empty.csv", [])
+    WorkspaceFiles(tmp_path / "workspace").write_csv(
+        "empty.csv", [], run_id="test", mutation_id="a1")
     probes = Probes(probe_key="test", register_session="test", workspace=tmp_path / "workspace",
                     store=store)
     try:
-        rows = await probes.workspace_csv("exports/empty.csv")
+        rows = await probes.workspace_csv("exports/test/a1-empty.csv")
         assert rows == []
         assert rows.columns == list(EXPORT_COLUMNS)
         assert not await probes.approval_recorded("r1")

@@ -692,8 +692,9 @@ class WorkerLoop:
             supplier_id=intent.probe_query.get("supplier_id"),
             due_before=intent.probe_query.get("due_before"),
         )
-        self.workspace.write_csv(args["name"], rows)
-        state.export_path = intent.path
+        export = self.workspace.write_csv(args["name"], rows, run_id=state.run_id,
+                                          mutation_id=intent.mutation_id)
+        state.export_path = export.relative_to(self.workspace.root).as_posix()
         state.export_rows = len(rows)
         return {"ok": True, "summary": f"Wrote {len(rows)} export rows", "progress": True}
 

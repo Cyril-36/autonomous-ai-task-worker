@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 
 FILENAME = re.compile(r"^[a-z0-9_-]{1,60}\.csv$")
+RUN_ID = re.compile(r"^[A-Za-z0-9_#-]{1,120}$")
+MUTATION_ID = re.compile(r"^[a-fA-F0-9]{1,64}$")
 EXPORT_COLUMNS = ("supplier_id", "invoice_number", "amount", "currency", "due_date")
 
 
@@ -33,12 +35,14 @@ class WorkspaceFiles:
             raise FileNotFoundError(path)
         return target.read_text(encoding="utf-8")
 
-    def write_csv(self, name: str, rows: list[dict[str, str]]) -> Path:
-        if not FILENAME.fullmatch(name):
-            raise ValueError("Invalid export filename")
-        target = self._inside(f"exports/{name}")
+    def write_csv(self, name: str, rows: list[dict[str, str]], *,
+                  run_id: str, mutation_id: str) -> Path:
+        if (not FILENAME.fullmatch(name) or not RUN_ID.fullmatch(run_id)
+                or not MUTATION_ID.fullmatch(mutation_id)):
+            raise ValueError("Invalid export identity or filename")
+        target = self._inside(f"exports/{run_id}/{mutation_id}-{name}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", encoding="utf-8", newline="") as stream:
+        with target.open("x", encoding="utf-8", newline="") as stream:
             writer = csv.DictWriter(stream, fieldnames=EXPORT_COLUMNS)
             writer.writeheader()
             for row in rows:

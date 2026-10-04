@@ -270,7 +270,12 @@ async def test_export_uses_probe_rows_and_verifies_exact_csv(tmp_path):
         portal_url="http://127.0.0.1:8101", register_url="http://127.0.0.1:8102")
     await worker.run("r1")
     assert store.get_run("r1").status == "completed"
-    assert (tmp_path / "workspace" / "exports" / "due.csv").is_file()
+    verification = next(event.data for event in store.events("r1")
+                        if event.type == "verification")
+    export_path = next(item["value"] for item in verification["evidence"]
+                       if item["label"] == "Export")
+    assert export_path.startswith("exports/r1/")
+    assert (tmp_path / "workspace" / export_path).is_file()
     assert any(event.type == "step" and event.data["tool"] == "files_list"
                and not event.data["ok"] for event in store.events("r1"))
 
