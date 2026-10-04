@@ -14,7 +14,8 @@ Everything runs locally against two sandbox apps of a fictional company, Halden 
 
 All numbers below are generated from the evaluation reports by `scripts/update_readme_metrics.py`; none are typed by hand. Live runs use `google/gemini-2.5-flash-lite` through AICredits.
 
-- **Development pass, live: 15/15 tasks** in one full pass on the current code, with every write audited: 0 false completions, 0 unauthorized writes, 0 unexpected writes, 0 duplicates ([report](evals/LIVE_DEV_AUDITED.md)). Earlier passes on this set: 6/15 before the generalization work, then 11/15 and 14/15 as general fixes landed.
+- **Development pass, live: 15/15 tasks** in one full pass, with every write audited: 0 false completions, 0 unauthorized writes, 0 unexpected writes, 0 duplicates ([report](evals/LIVE_DEV_AUDITED.md)). Earlier passes on this set: 6/15 before the generalization work, then 11/15 and 14/15 as general fixes landed.
+- **Invoice correction (a sixth goal type, added after that pass): passes live**, approved and verified on the same record and its new version ([report](evals/LIVE_SYNC_CHECK.md)). Its first live run failed: the edit page needs the register record id, which the goal did not show, so the model guessed the document id. That was fixed as a general rule (the manifest declares which id a write page takes, and the goal and plan show it) before the passing run. It has one live run, so treat it as checked, not measured.
 - **Held-out tasks, live: 9/11**, run once on frozen code, with 0 false completions and 0 duplicates. That run used the earlier scorer, which audited writes only in the scenarios that expected none, so its write counts are weaker evidence than the development pass above. These were written before any run and never used for tuning: new wording, other suppliers, the admin account, a batch, a contact update needing approval. The two misses were general feedback gaps (the goal did not show a supplier id; a page without a form gave a vague error). They were fixed afterwards and both passed on a post-fix recheck ([report](evals/LIVE_HELDOUT_RECHECK.md)); the held-out result stays 9/11.
 - **Request understanding, live: 24/24 on the latest pass**, over 24 requests including paraphrases, unseen supplier names, and ambiguous and unsupported requests (earlier passes: 24/24, 23/24, 22/24, 21/24; the recurring miss was contact-update requests that Flash Lite declined). Since the latest pass, a request that only asks to check ("Do we already have BF-2291 on file?") is expected to get a confirmation question, because the check-then-register goal can write. This set was used to find bugs (it started at 15/24), so it counts as development data, not held-out.
 - **Safety: 11/11 guard controls; in the audited development pass, 0 unauthorized, 0 unexpected and 0 duplicate writes.** Two reviews tightened the scorer: it now snapshots the register before every run and audits every scenario, judges every write against the user running the task (not the record's original author), and counts a completed run with any unexpected or unauthorized write as a false completion. The audited development pass made no edits to existing records and no writes under another user's name, so its result is unchanged under the stricter rules. Earlier write counts predate the audit. One earlier development pass reported a false completion that was a scorer error (it required the file name `due.csv`, which the request never mentions).
@@ -25,16 +26,16 @@ All numbers below are generated from the evaluation reports by `scripts/update_r
 
 | Metric | Result |
 | --- | ---: |
-| Task success | 20/20 |
+| Task success | 21/21 |
 | Control pass | 11/11 |
-| Field correctness | 10/11 |
-| False completions | 0/31 |
-| Unauthorized writes | 0/31 |
-| Unexpected writes | 0/31 |
-| Duplicate records | 0/31 |
-| Tool calls | 100/31 runs |
-| Latency | 10.43 s/31 runs |
-| Settled cost | ₹0.000000/31 scenarios |
+| Field correctness | 11/12 |
+| False completions | 0/32 |
+| Unauthorized writes | 0/32 |
+| Unexpected writes | 0/32 |
+| Duplicate records | 0/32 |
+| Tool calls | 110/32 runs |
+| Latency | 10.84 s/32 runs |
+| Settled cost | ₹0.000000/32 scenarios |
 
 ### Development pass, live
 
@@ -181,7 +182,7 @@ Each run moves through **discover** (read-only) → **commit goal** → **execut
 The prompt and the model's tools are identical for every goal type (a test checks this). What a new task needs depends on whether it uses the existing apps:
 
 - **A new workflow on the existing apps** (for example a different goal over the portal and register): a goal type in `worker/verify/goals.py` (the actions that mean it, how its sources are resolved, its field map and its checks), its procedure in `config/apps.yaml`, and any read-only probe the verifier needs in `worker/verify/probes.py`. The loop, the prompt, the tools and the browser stay unchanged.
-  The source-backed correction workflow (`sync_existing_invoice`) is an example: it updates one existing register record to match the frozen portal invoice, requires approval, and verifies the same record and its new version.
+  The source-backed correction workflow (`sync_existing_invoice`) is an example: it updates one existing register record to match the frozen portal invoice, requires approval, and verifies the same record and its new version. Adding it needed a goal definition, a manifest page and procedure, and one runtime fix found by its first live run (write pages that take a record id).
 - **A new app** needs more, and some of it is still code today: the app's pages in `config/apps.yaml`, how the runtime signs in to it (`BrowserSession.start`), its origin in the browser allowlist, a read-only probe for verification, and the mapping from its form to the record a write targets (`WorkerLoop._submit` currently knows invoice and supplier forms). Making sign-in, origins and write targets declarative is listed under next steps.
 
 ### Reliability and safety
