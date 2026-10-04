@@ -177,6 +177,7 @@ export interface EvidenceItem {
   value: string;
   url: string | null;
   screenshot_path: string | null;
+  download_url?: string | null;
 }
 
 export interface VerificationResult {

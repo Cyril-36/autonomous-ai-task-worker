@@ -358,6 +358,7 @@ class EvidenceItem(Frozen):
     value: str
     url: str | None = None  # link into a sandbox app
     screenshot_path: str | None = None
+    download_url: str | None = None  # authenticated, run-owned export
 
 
 class VerificationResult(Frozen):

@@ -138,7 +138,10 @@ async def verify(contract: GoalContract, probes, *, export_path: str | None = No
                                  actual=f"{len(actual_rows) if actual_rows is not None else 0} rows",
                                  detail="correct columns and exact multiset" if passed else "Missing, extra or incorrect row/column"))
             if passed and export_path:
-                evidence.append(EvidenceItem(label="Export", value=export_path))
+                evidence.append(EvidenceItem(
+                    label="Export", value=export_path,
+                    download_url=(f"/api/runs/{contract.run_id}/exports/"
+                                  f"{export_path.rsplit('/', 1)[-1]}")))
         elif kind == "extra":
             criterion = obligation.params
             where = criterion["where"]

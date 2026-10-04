@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -198,6 +199,25 @@ def create_app(
         if not file.is_file():
             raise HTTPException(404, detail=("not_found", "Artifact not found"))
         return FileResponse(file, media_type="image/png")
+
+    @app.get("/api/runs/{run_id}/exports/{name}")
+    def export(run_id: str, name: str, request: Request):
+        principal = auth.current(request)
+        service._visible(run_id, principal)
+        if not re.fullmatch(r"[a-fA-F0-9]{1,64}-[a-z0-9_-]{1,60}\.csv", name):
+            raise HTTPException(404, detail=("not_found", "Export not found"))
+        verification = service.detail(run_id, principal)["verification"]
+        relative = f"exports/{run_id}/{name}"
+        if not verification or not verification["passed"] or not any(
+            item.get("label") == "Export" and item.get("value") == relative
+            for item in verification.get("evidence", [])
+        ):
+            raise HTTPException(404, detail=("not_found", "Export not found"))
+        workspace = (store.path.parent / "workspace").resolve()
+        file = (workspace / relative).resolve()
+        if not file.is_relative_to(workspace) or not file.is_file():
+            raise HTTPException(404, detail=("not_found", "Export not found"))
+        return FileResponse(file, media_type="text/csv", filename=name)
 
     @app.api_route("/api/{full_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     def unknown_api(full_path: str):

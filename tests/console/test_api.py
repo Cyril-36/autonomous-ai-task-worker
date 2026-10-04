@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
 from worker.console.app import create_app
+from worker.store import Store
+from worker.tools.files import WorkspaceFiles
 
 
 def client_for(tmp_path):
@@ -90,3 +92,29 @@ def test_budget_examples_and_artifact_error(tmp_path):
         assert client.get("/api/budget").json()["estimated"] is True
         run = client.post("/api/runs", json={"request": "Check invoice BF-2291"}).json()
         assert client.get(f"/api/runs/{run['run_id']}/artifacts/missing.png").status_code == 404
+
+
+def test_export_download_requires_own_run_and_verified_evidence(tmp_path):
+    with client_for(tmp_path) as client:
+        login(client)
+        run_id = client.post("/api/runs", json={"request": "Export invoices"}).json()["run_id"]
+        path = WorkspaceFiles(tmp_path / "workspace").write_csv(
+            "due.csv", [], run_id=run_id, mutation_id="abc123")
+        name = path.name
+        route = f"/api/runs/{run_id}/exports/{name}"
+        assert client.get(route).status_code == 404
+        Store(tmp_path / "worker.db").append_event(run_id, "verification", {
+            "run_id": run_id, "contract_id": "test", "passed": True, "checks": [],
+            "status": "completed", "summary": "Exact CSV verified", "remaining": [],
+            "evidence": [{"label": "Export", "value": f"exports/{run_id}/{name}",
+                          "download_url": route}],
+        })
+        response = client.get(route)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/csv")
+        assert response.text.startswith("supplier_id,invoice_number")
+        assert "attachment" in response.headers["content-disposition"]
+        assert client.get(f"/api/runs/{run_id}/exports/other.csv").status_code == 404
+        client.delete("/api/session")
+        login(client, "meera@example.com", "meera-test")
+        assert client.get(route).status_code == 403

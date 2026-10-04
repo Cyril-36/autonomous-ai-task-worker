@@ -67,7 +67,9 @@ export function Evidence({ result, status }: EvidenceProps) {
             return (
               <span key={e.label}>
                 <span className="muted">{e.label}: </span>
-                {e.url ? (
+                {e.download_url ? (
+                  <a href={e.download_url} download>Download CSV</a>
+                ) : e.url ? (
                   <a href={e.url} target="_blank" rel="noreferrer">
                     {e.value}
                     {where ? ` in ${where}` : ""}

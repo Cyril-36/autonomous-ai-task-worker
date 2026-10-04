@@ -50,6 +50,7 @@ Visibility: operators see only runs they started; admins see all. Every endpoint
 | `POST /api/runs/{run_id}/approvals/{approval_id}` | `{"decision": "approve" \| "reject", "note": str?}` | `200 Approval` · `403` unless initiator or admin · `409 conflict` / `409 approval_expired` |
 | `POST /api/runs/{run_id}/cancel` | — | `202` (run ends `failed`, reason `cancelled_by_user`) |
 | `GET /api/runs/{run_id}/artifacts/{name}` | — | `200 image/png` (step screenshots; same visibility rule) |
+| `GET /api/runs/{run_id}/exports/{name}` | — | `200 text/csv` attachment only when the latest passing verification names that run-owned export; same visibility rule |
 | `GET /api/budget` | — | `200 Budget` |
 
 ```ts
@@ -72,6 +73,7 @@ type Budget = {
 };
 ```
 `RunSummary`, `Principal`, `GoalContract`, `PlanStep`, `Fact`, `Approval`, `PendingMutation`, `VerificationResult` serialize exactly as the pydantic models in `worker/contracts.py`.
+`EvidenceItem.download_url` is optional and points to the authenticated CSV route for a verified export.
 
 ### Live stream — `GET /api/runs/{run_id}/stream`
 - Each message: `id: <seq>`, `event: <type>`, `data: <RunEvent JSON>`.

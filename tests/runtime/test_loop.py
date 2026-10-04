@@ -276,6 +276,8 @@ async def test_export_uses_probe_rows_and_verifies_exact_csv(tmp_path):
                        if item["label"] == "Export")
     assert export_path.startswith("exports/r1/")
     assert (tmp_path / "workspace" / export_path).is_file()
+    assert verification["evidence"][0]["download_url"] == (
+        f"/api/runs/r1/exports/{export_path.rsplit('/', 1)[-1]}")
     assert any(event.type == "step" and event.data["tool"] == "files_list"
                and not event.data["ok"] for event in store.events("r1"))
 
