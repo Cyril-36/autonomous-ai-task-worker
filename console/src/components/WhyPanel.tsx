@@ -33,7 +33,10 @@ function decisionText(item: TimelineItem): string | null {
 export function WhyPanel({ contract, timeline, verification, status, reason }: WhyPanelProps) {
   const action = restatedAction(timeline);
   const results = new Map(verification?.checks.map((check) => [check.obligation_id, check]) ?? []);
-  const decisions = timeline.map(decisionText).filter((value): value is string => !!value).slice(-4);
+  const decisions = [...new Set(timeline.map(decisionText).filter((value): value is string => !!value))].slice(-4);
+  const statusLabel = statusMeta(status, status === "completed" ? verification?.passed === true : undefined).label;
+  // A reason already listed above is not repeated as the outcome; the status says where things stand.
+  const outcome = reason && !decisions.includes(reason) ? readableReason(reason) : statusLabel;
   return (
     <section className="sheet sheet-pad stack" aria-labelledby="why-h">
       <div className="sheet-head"><h2 id="why-h" className="sheet-title">Why it did that</h2></div>
@@ -58,7 +61,7 @@ export function WhyPanel({ contract, timeline, verification, status, reason }: W
       )}
       <div className="why-part">
         <h3>Current outcome</h3>
-        <p>{reason ? readableReason(reason) : statusMeta(status, status === "completed" ? verification?.passed === true : undefined).label}</p>
+        <p>{outcome}</p>
       </div>
     </section>
   );

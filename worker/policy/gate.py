@@ -89,17 +89,28 @@ def check_mutation(state, intent: MutationIntent) -> GateDecision:
             return _deny("field_mismatch", f"{target} differs from the frozen source")
     threshold = Decimal(str(state.policy.get("threshold", "100000.00")))
     amount = Decimal(intent.fields.get("amount", "0"))
-    requires_approval = (amount >= threshold or intent.target_version is not None
-                         or state.contract.goal_type == GoalType.update_supplier_contact
-                         and "remittance_email" in intent.fields)
-    if requires_approval:
+    rules = approval_rules(state, intent, amount, threshold)
+    if rules:
         approvals = [approval for approval in state.approvals if approval.run_id == intent.run_id]
         if not approvals:
-            return _deny("needs_approval", "Company policy requires approval for this write")
+            return _deny("needs_approval", "Approval needed because " + " and ".join(rules))
         if not any(validate_approval(approval, intent, int(state.policy["version"]))
                    for approval in approvals):
             return _deny("approval_invalid", "Approval expired or no longer matches this write")
     return GateDecision(allowed=True, code="allowed", reason="Write matches locked contract")
+
+
+def approval_rules(state, intent: MutationIntent, amount: Decimal, threshold: Decimal) -> list[str]:
+    """The company rules that make this write wait for a person, in plain words."""
+    rules = []
+    if amount >= threshold:
+        rules.append(f"the amount {amount:,.2f} is at or above the approval limit {threshold:,.2f}")
+    if intent.target_version is not None:
+        rules.append("it changes an existing record")
+    if (state.contract.goal_type == GoalType.update_supplier_contact
+            and "remittance_email" in intent.fields):
+        rules.append("it changes where payments are sent")
+    return rules
 
 
 def check_file_write(state, intent: FileWriteIntent) -> GateDecision:

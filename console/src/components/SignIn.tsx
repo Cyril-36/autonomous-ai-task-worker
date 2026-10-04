@@ -15,15 +15,41 @@ export function SignIn({ onSignedIn }: SignInProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [loading, setLoading] = useState(true);
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
-    api
-      .demoUsers()
-      .then((list) => {
-        setUsers(list);
-        if (list[0]) setEmail(list[0].email);
-      })
-      .catch((e: unknown) => setError(e instanceof ApiError ? e.message : "Can't load the sandbox accounts."));
-  }, []);
+    let cancelled = false;
+    let timer: number | undefined;
+    // The worker may still be starting when the page opens; keep trying for a while before giving up.
+    const load = (tries: number) => {
+      api
+        .demoUsers()
+        .then((list) => {
+          if (cancelled) return;
+          setUsers(list);
+          setError(list.length ? null : "The sandbox has no accounts. Run make reset-demo, then reload.");
+          if (list[0]) setEmail(list[0].email);
+          setLoading(false);
+        })
+        .catch((e: unknown) => {
+          if (cancelled) return;
+          if (e instanceof ApiError && e.status === 0 && tries < 15) {
+            timer = window.setTimeout(() => load(tries + 1), 2000);
+            return;
+          }
+          setError(e instanceof ApiError ? e.message : "Can't load the sandbox accounts.");
+          setLoading(false);
+        });
+    };
+    setLoading(true);
+    setError(null);
+    load(0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [attempt]);
 
   const picked = users.find((u) => u.email === email);
 
@@ -64,6 +90,10 @@ export function SignIn({ onSignedIn }: SignInProps) {
             <h2 id="signin-h" style={{ fontSize: 17 }}>Sign in</h2>
             <p className="muted" style={{ fontSize: 13 }}>Sandbox accounts. Each one is allowed to change different suppliers.</p>
           </div>
+          {loading && <p className="muted" role="status" style={{ fontSize: 13 }}>Loading sandbox accounts… If the worker is still starting, this keeps trying.</p>}
+          {!loading && users.length === 0 && (
+            <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
+          )}
           <fieldset className="accounts">
             <legend className="sr-only">Account</legend>
             {users.map((u) => (

@@ -256,6 +256,8 @@ export interface StepData {
   error_code?: string;
   duration_ms: number;
   skipped?: boolean;
+  /** The step stopped to wait for a person (an approval or an answer), not a failure. */
+  paused?: boolean;
 }
 
 export interface GateData {

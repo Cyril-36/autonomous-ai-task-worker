@@ -106,6 +106,19 @@ def ready_to_finish(state: RuntimeState) -> bool:
     return True
 
 
+CONTENT_BOX = """() => {
+  let right = 0, bottom = 0;
+  for (const el of document.body.querySelectorAll('*')) {
+    const r = el.getBoundingClientRect();
+    if (r.width && r.height && getComputedStyle(el).visibility !== 'hidden') {
+      right = Math.max(right, r.right + window.scrollX);
+      bottom = Math.max(bottom, r.bottom + window.scrollY);
+    }
+  }
+  return right && bottom ? {right, bottom} : null;
+}"""
+
+
 class WorkerLoop:
     def __init__(self, *, store, provider, browser, probes, workspace: WorkspaceFiles | Path | None,
                  portal_url: str, register_url: str, trace=None, stop_after_goal: bool = False):
@@ -297,6 +310,7 @@ class WorkerLoop:
                                              **({"url": result["url"]} if result.get("url") else {}),
                                              **({"error_code": result["error_code"]}
                                                 if result.get("error_code") else {}),
+                                             **({"paused": True} if result.get("pause") else {}),
                                              **({"screenshot": result["screenshot"]}
                                                 if result.get("screenshot") else {})})
                 self.store.update_run(run_id, steps=state.steps)
@@ -832,7 +846,12 @@ class WorkerLoop:
         path = self.store.path.parent / "artifacts" / state.run_id / name
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            await self.browser.page.screenshot(path=str(path))
+            page = self.browser.page
+            # crop to what the page draws, so a sparse page is readable as a thumbnail
+            box = await page.evaluate(CONTENT_BOX)
+            clip = ({"x": 0, "y": 0, "width": min(max(box["right"] + 24, 360), 1280),
+                     "height": min(max(box["bottom"] + 24, 200), 2000)} if box else None)
+            await page.screenshot(path=str(path), clip=clip, full_page=clip is not None)
             return name
         except PlaywrightError:
             return None

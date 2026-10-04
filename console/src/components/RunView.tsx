@@ -70,8 +70,13 @@ export function RunView({ run }: RunViewProps) {
   const terminal = isTerminal(view);
   const unverified = view.status === "completed" && !verified;
   const shownInEvidence = view.status === "completed" && verified;
+  // The open card below carries the full question or approval text; the banner only points to it.
   const reason = shownInEvidence
     ? null
+    : view.question
+    ? "It needs your answer below to continue."
+    : view.openApproval
+    ? "Nothing is saved until you approve the change below."
     : unverified
     ? "The worker reported this run as completed, but no passing verification result arrived, so it is not shown as done."
     : view.statusReason

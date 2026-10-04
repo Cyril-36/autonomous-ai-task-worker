@@ -89,7 +89,7 @@ type Budget = {
 | `run_status` | `{status: RunStatus, reason?: string}` |
 | `phase` | `{phase: "setup" \| "discover" \| "execute" \| "verify" \| "done"}` |
 | `plan` | `{steps: PlanStep[], revision: number, reason?: string}` |
-| `step` | `{step: number, tool: string, args: object (secrets redacted), ok: boolean, summary: string, url?: string, observation_id?: string, screenshot?: string (artifact name), error_code?: string, duration_ms: number, skipped?: boolean}` |
+| `step` | `{step: number, tool: string, args: object (secrets redacted), ok: boolean, summary: string, url?: string, observation_id?: string, screenshot?: string (artifact name), error_code?: string, duration_ms: number, skipped?: boolean, paused?: boolean (waiting for an approval or an answer, not a failure)}` |
 | `fact` | `Fact` + `{step: number}` |
 | `contract` | `{action: "committed" \| "revised" \| "rejected", reason?: string, contract?: GoalContract}` |
 | `gate` | `{step: number, allowed: boolean, code: GateCode, reason: string, mutation?: {action_url: string, fields: object, target_label?: string}}` |

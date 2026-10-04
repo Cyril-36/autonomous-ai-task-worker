@@ -43,6 +43,16 @@ function toRow(item: TimelineItem): Row {
   switch (item.type) {
     case "step": {
       const d = item.data;
+      if (d.paused) {
+        // The approval or question row next to it carries the reason; this row only marks the wait.
+        return {
+          n: String(d.step),
+          kind: toolLabel(d.tool),
+          tone: "k-wait",
+          text: d.tool === "submit_form" ? "Waiting for your approval before saving." : "Waiting for your answer.",
+          screenshot: d.screenshot,
+        };
+      }
       const failed = !d.ok;
       return {
         n: String(d.step),
@@ -142,6 +152,15 @@ function toRow(item: TimelineItem): Row {
   }
 }
 
+/** A refused goal that turned into a question is shown once, as the question. */
+export function visibleItems(items: TimelineItem[]): TimelineItem[] {
+  return items.filter((item, index) => {
+    if (item.type !== "contract" || item.data.action !== "rejected" || !item.data.reason) return true;
+    const reason = item.data.reason;
+    return !items.slice(index + 1, index + 3).some((next) => next.type === "question" && next.data.text.startsWith(reason));
+  });
+}
+
 interface LedgerProps {
   runId: string;
   items: TimelineItem[];
@@ -150,7 +169,8 @@ interface LedgerProps {
   onOpenShot: (src: string) => void;
 }
 
-export function Ledger({ runId, items, fresh, working, onOpenShot }: LedgerProps) {
+export function Ledger({ runId, items: all, fresh, working, onOpenShot }: LedgerProps) {
+  const items = visibleItems(all);
   return (
     <section className="sheet ledger" aria-labelledby="ledger-h">
       <div className="ledger-head">

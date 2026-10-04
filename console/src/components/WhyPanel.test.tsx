@@ -33,4 +33,12 @@ describe("decision explanation", () => {
     expect(html).toContain("Amount exceeds the current approval threshold");
     expect(html).toContain("Waiting for approval");
   });
+
+  it("lists a repeated reason once and does not repeat it as the outcome", () => {
+    const gate = (seq: number) => ({ type: "gate", run_id: "r1", seq, ts: "2026-10-04T04:01:00Z",
+      data: { step: seq, allowed: false, code: "needs_approval", reason: "Approval needed because it changes an existing record" } });
+    const html = renderToStaticMarkup(<WhyPanel contract={null} timeline={[gate(1), gate(2)] as TimelineItem[]}
+      verification={null} status="awaiting_approval" reason="Approval needed because it changes an existing record" />);
+    expect(html.split("it changes an existing record").length - 1).toBe(1);
+  });
 });
