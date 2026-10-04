@@ -8,6 +8,7 @@ import { evidenceCaptures } from "./evidenceCaptures";
 import { Ledger } from "./Ledger";
 import { ApprovalCard, QuestionCard } from "./NeedsYou";
 import { FactsPanel, GoalPanel, PlanPanel } from "./Panels";
+import { WhyPanel } from "./WhyPanel";
 
 const PHASE_LABEL: Record<Phase, string> = {
   setup: "Sign in",
@@ -132,6 +133,8 @@ export function RunView({ run }: RunViewProps) {
       </div>
 
       <div className="col-right">
+        <WhyPanel contract={view.contract} timeline={view.timeline}
+          verification={view.verification} status={view.status} reason={view.statusReason} />
         <GoalPanel contract={view.contract} verification={terminal ? view.verification : null} />
         <PlanPanel steps={view.plan.steps} revision={view.plan.revision} />
         <FactsPanel facts={view.facts} order={view.factOrder} />
