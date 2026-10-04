@@ -24,15 +24,15 @@ jobs:
         run: |
           uv sync --locked
           uv run playwright install --with-deps chromium
+      - name: Install, test and build console
+        working-directory: console
+        run: |
+          npm ci
+          npm test
+          npm run build
       - name: Lint backend
         run: uv run ruff check .
       - name: Test backend
         run: uv run pytest -q
       - name: Run scripted scenarios
         run: uv run python -m evals.run --suite dev --out CI_REPORT.md
-      - name: Install and check console
-        working-directory: console
-        run: |
-          npm ci
-          npm test
-          npm run build
