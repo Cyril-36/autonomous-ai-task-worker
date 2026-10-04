@@ -1,13 +1,15 @@
 import type { RunStatus, VerificationResult } from "../api/types";
 import { describeUrl } from "../format";
+import type { CapturePair } from "./evidenceCaptures";
 
 interface EvidenceProps {
   result: VerificationResult;
   status: RunStatus;
+  captures?: CapturePair;
 }
 
 /** Rendered only from the verifier's result; nothing here comes from model text. */
-export function Evidence({ result, status }: EvidenceProps) {
+export function Evidence({ result, status, captures }: EvidenceProps) {
   const passed = result.checks.filter((c) => c.passed).length;
   const ok = result.passed && status === "completed";
   const heading = ok
@@ -23,6 +25,18 @@ export function Evidence({ result, status }: EvidenceProps) {
         <span className="sheet-note">read back from the systems, not taken from the worker</span>
       </div>
       <p className="evidence-summary">{result.summary}</p>
+      {ok && captures && (
+        <div className="evidence-captures" aria-label="Source and saved page captures">
+          {[captures.source, captures.saved].map((capture) => (
+            <figure key={capture.label}>
+              <a href={capture.src} target="_blank" rel="noreferrer">
+                <img src={capture.src} alt={`${capture.label} captured at ${capture.capturedAt}`} loading="lazy" />
+              </a>
+              <figcaption>{capture.label}{capture.revision ? `, revision ${capture.revision}` : ""} · captured {capture.capturedAt}</figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
       <div style={{ overflowX: "auto", border: "1px solid var(--rule-soft)", borderRadius: 8 }}>
         <table className="checks">
           <thead>

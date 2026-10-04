@@ -412,6 +412,12 @@ async def test_fake_model_drives_real_browser_and_verifies_invoice(tmp_path, fau
                        if event.type == "step" and event.data.get("screenshot")]
         assert screenshots
         assert (tmp_path / "artifacts" / "r1" / screenshots[-1]).is_file()
+        source_steps = [event for event in store.events("r1") if event.type == "step"
+                        and event.data["tool"] == "record_facts"]
+        assert source_steps[-1].data.get("screenshot")
+        assert source_steps[-1].data.get("url", "").endswith(number.lower())
+        assert (tmp_path / "artifacts" / "r1" /
+                source_steps[-1].data["screenshot"]).is_file()
     finally:
         await probes.close()
         await browser.close()

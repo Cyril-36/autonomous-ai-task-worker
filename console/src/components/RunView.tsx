@@ -4,6 +4,7 @@ import { PHASES, type Phase } from "../api/types";
 import { count, formatInr, readableReason, shortTime, statusMeta } from "../format";
 import { isTerminal, type RunState } from "../state/useRun";
 import { Evidence } from "./Evidence";
+import { evidenceCaptures } from "./evidenceCaptures";
 import { Ledger } from "./Ledger";
 import { ApprovalCard, QuestionCard } from "./NeedsYou";
 import { FactsPanel, GoalPanel, PlanPanel } from "./Panels";
@@ -123,7 +124,9 @@ export function RunView({ run }: RunViewProps) {
 
         {view.openApproval && <ApprovalCard runId={view.summary.run_id} approval={view.openApproval} />}
         {view.question && <QuestionCard runId={view.summary.run_id} question={view.question} />}
-        {view.verification && terminal && <Evidence result={view.verification} status={view.status} />}
+        {view.verification && terminal && <Evidence result={view.verification} status={view.status}
+          captures={evidenceCaptures(view.summary.run_id, view.contract, view.timeline,
+                                     view.verification.passed && view.status === "completed")} />}
 
         <Ledger runId={view.summary.run_id} items={view.timeline} fresh={run.freshSeqs} working={working} onOpenShot={setShot} />
       </div>

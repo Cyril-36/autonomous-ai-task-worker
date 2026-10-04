@@ -294,6 +294,7 @@ class WorkerLoop:
                 self._emit(run_id, "step", {"step": state.steps, "tool": name,
                                              "args": self._safe_args(args), "ok": result["ok"],
                                              "summary": result["summary"], "duration_ms": 0,
+                                             **({"url": result["url"]} if result.get("url") else {}),
                                              **({"error_code": result["error_code"]}
                                                 if result.get("error_code") else {}),
                                              **({"screenshot": result["screenshot"]}
@@ -350,7 +351,7 @@ class WorkerLoop:
                         "Check the id; the goal lists the ids it fixes."}
             return {"ok": True, "summary": self._page_summary(observation), "progress": True}
         if name == "record_facts":
-            return self._record_facts(state, args)
+            return await self._record_facts(state, args)
         if name == "fill_form":
             return await self._fill_form(state, args["fields"])
         if name == "submit_form":
@@ -556,7 +557,7 @@ class WorkerLoop:
             state.facts[key] = fact
             self._emit(state.run_id, "fact", {**fact.model_dump(mode="json"), "step": state.steps})
 
-    def _record_facts(self, state: RuntimeState, args: dict) -> dict:
+    async def _record_facts(self, state: RuntimeState, args: dict) -> dict:
         if args.get("observation_id"):
             observation = state.observations.get(args["observation_id"])
         else:
@@ -587,8 +588,12 @@ class WorkerLoop:
             return {"ok": False, "summary": f"None of those labels are on this document. "
                                             f"Labels here: {', '.join(sorted(available))}"}
         note = f" Not found: {', '.join(missing)}." if missing else ""
+        screenshot = None
+        if (self.browser and self.browser.current and
+                self.browser.current.observation_id == observation.observation_id):
+            screenshot = await self._capture_artifact(state)
         return {"ok": True, "summary": "Recorded " + "; ".join(recorded) + "." + note,
-                "progress": True}
+                "progress": True, "url": observation.url, "screenshot": screenshot}
 
     async def _fill_form(self, state: RuntimeState, items: list) -> dict:
         observation = self.browser.current or await self._observe(state)

@@ -230,6 +230,10 @@ h1, h2, h3, p { margin: 0; }
 .evidence h2 { font-size: 16px; color: var(--ok-ink); }
 .evidence.failed h2 { color: var(--stop-ink); }
 .evidence-summary { font-size: 14px; max-width: 72ch; }
+.evidence-captures { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+.evidence-captures figure { margin: 0; min-width: 0; border: 1px solid var(--rule-soft); border-radius: 8px; overflow: hidden; }
+.evidence-captures img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+.evidence-captures figcaption { padding: 8px 10px; font-size: 12px; color: var(--ink-soft); }
 .checks { width: 100%; border-collapse: collapse; font-size: 13px; }
 .checks th { text-align: left; font-weight: 500; font-size: 12px; color: var(--ink-3); padding: 8px 12px; background: var(--sheet-2); }
 .checks td { padding: 8px 12px; border-top: 1px solid var(--rule-soft); vertical-align: top; }
