@@ -151,8 +151,10 @@ def _action_negated(words: list[str], index: int) -> bool:
             return True
         if (words[position] == "not" and position > 0 and words[position - 1] == "do"):
             return True
-    for position in range(max(0, index - 3), index):
+    for position in range(index - 1, max(-1, index - 4), -1):
         word = words[position]
+        if word in {"but", "however", "instead", "just"} or _ACTION_WORD.match(word):
+            break
         if word not in _NEGATION:
             continue
         # "If not, put it in" describes when to act; it does not forbid the action.
@@ -193,6 +195,10 @@ def action_evidence(goal_type: GoalType, request: str) -> str:
                 unclear = True
                 continue
             if rule.get("self_object"):
+                following = lower[index + 1:index + 3]
+                if following[:1] in (["nothing"], ["none"]) or following[:2] == ["no", "invoices"]:
+                    denied = True
+                    continue
                 return "clear"
             if rule.get("sentence_object") and any(rule["sentence_object"].match(item)
                                                     for item in lower):

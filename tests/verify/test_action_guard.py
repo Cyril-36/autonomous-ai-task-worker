@@ -98,6 +98,13 @@ def test_unsupported_object_cannot_become_an_invoice_write(request_text):
 def test_negation_in_another_clause_does_not_cancel_a_positive_invoice_request():
     assert action_evidence(GoalType.register_invoice,
                            "Don't export; just register the latest invoice from Larkspur Supplies.") == "clear"
+    assert action_evidence(GoalType.register_invoice,
+                           "Don't export, just register the latest invoice from Larkspur Supplies.") == "clear"
+
+
+def test_export_nothing_does_not_authorize_an_export():
+    assert action_evidence(GoalType.export_invoices, "Export nothing.") == "none"
+    assert action_evidence(GoalType.export_invoices, "Export no invoices.") == "none"
 
 
 @pytest.mark.asyncio
